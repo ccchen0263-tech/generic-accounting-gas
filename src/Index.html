@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>公版會計系統</title>
+  <?!= include('Css'); ?>
+</head>
+<body>
+  <!-- 登入 -->
+  <section id="login" class="login" hidden>
+    <form id="loginForm" class="login-card" autocomplete="on">
+      <div class="brand-mark" aria-hidden="true">帳</div>
+      <h1>公版會計系統</h1>
+      <p class="muted">請輸入帳號密碼登入</p>
+      <label>帳號<input id="loginUser" name="username" autocomplete="username" required></label>
+      <label>密碼<input id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary block" type="submit" id="loginBtn">登入</button>
+      <p id="loginMsg" class="error-text" role="alert"></p>
+    </form>
+  </section>
+
+  <!-- 主畫面 -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="開啟選單" aria-expanded="false">☰</button>
+      <h1 id="companyTitle">公版會計系統</h1>
+      <div class="who"><span id="whoName"></span><span id="whoRole" class="role-tag"></span></div>
+      <button class="btn ghost small" id="logoutBtn" type="button">登出</button>
+    </header>
+    <div class="layout">
+      <nav id="nav" class="nav" aria-label="功能選單"></nav>
+      <main id="main" class="main" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <!-- 對話框 -->
+  <div id="modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="modalTitle"></h2>
+        <button class="icon-btn" id="modalClose" type="button" aria-label="關閉">✕</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div id="busy" class="busy" hidden><div class="spinner" aria-label="處理中"></div></div>
+
+  <?!= include('Js'); ?>
+</body>
+</html>
