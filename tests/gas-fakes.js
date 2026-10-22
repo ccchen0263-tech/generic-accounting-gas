@@ -70,7 +70,13 @@
       for (var i = 0; i < nr; i++) {
         var rowIdx = r - 1 + i;
         while (sheet.data.length <= rowIdx) sheet.data.push([]);
-        for (var j = 0; j < nc; j++) sheet.data[rowIdx][c - 1 + j] = vals[i][j];
+        for (var j = 0; j < nc; j++) {
+          var v = vals[i][j];
+          // 模擬試算表：單引號開頭存成純文字（不含單引號）；= 開頭會被當公式
+          if (typeof v === 'string' && v.charAt(0) === "'") v = v.slice(1);
+          else if (typeof v === 'string' && /^[=+]/.test(v)) v = '#公式被執行';
+          sheet.data[rowIdx][c - 1 + j] = v;
+        }
       }
       return this;
     };
@@ -180,6 +186,7 @@
         DigestAlgorithm: { SHA_256: 'SHA_256' },
         Charset: { UTF_8: 'UTF_8' },
         computeDigest: function (alg, str) { return sha256Bytes(str); },
+        sleep: function () {},
         getUuid: function () {
           uuidCounter++;
           var hex = '';

@@ -102,6 +102,7 @@ var PERMISSIONS = {
   saveOpening:      ['管理者', '會計'],
   stocktakePreview: ['管理者', '會計'],
   stocktakeSave:    ['管理者', '會計'],
+  stocktakeClear:   ['管理者', '會計'],
   listPeriods:      ['管理者', '會計'],
   lockPeriod:       ['管理者', '會計'],
   unlockPeriod:     ['管理者'],
@@ -120,4 +121,5 @@ var PERMISSIONS = {
 
 var LOGIN_MAX_FAILS = 5;
 var LOGIN_LOCK_SECONDS = 600;
+var LOGIN_GLOBAL_SLOWDOWN = 20;
 var SESSION_SECONDS = 21600; // 6 小時

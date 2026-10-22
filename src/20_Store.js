@@ -36,9 +36,19 @@ function readObjects_(name) {
   });
 }
 
+/**
+ * 寫入試算表前的保護：以「=」「+」開頭的文字會被試算表當成公式執行，
+ * 前面加單引號強制存成純文字（試算表讀回時不含單引號）
+ */
+function cellValue_(v) {
+  if (v === undefined || v === null) return '';
+  if (typeof v === 'string' && /^[=+]/.test(v)) return "'" + v;
+  return v;
+}
+
 /** 依標題順序把物件轉成列 */
 function toRow_(name, obj) {
-  return HEADERS[name].map(function (h) { return obj[h] === undefined ? '' : obj[h]; });
+  return HEADERS[name].map(function (h) { return cellValue_(obj[h]); });
 }
 
 function appendObjects_(name, objs) {
@@ -70,7 +80,7 @@ function updateCells_(name, rowNumber, patch) {
   Object.keys(patch).forEach(function (h) {
     var col = headers.indexOf(h);
     if (col < 0) throw new Error('欄位「' + h + '」不存在');
-    sh.getRange(rowNumber, col + 1, 1, 1).setValues([[patch[h]]]);
+    sh.getRange(rowNumber, col + 1, 1, 1).setValues([[cellValue_(patch[h])]]);
   });
 }
 

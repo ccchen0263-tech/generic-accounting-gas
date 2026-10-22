@@ -99,6 +99,7 @@ function validateOpening_(rows, accountsByCode) {
   var errors = [], dr = 0, cr = 0;
   rows.forEach(function (r) {
     var d = toAmount_(r.debit), c = toAmount_(r.credit);
+    if (isNaN(d) || isNaN(c)) { errors.push('科目 ' + r.code + '：金額不是數字'); return; }
     if (!d && !c) return;
     var acc = accountsByCode[r.code];
     if (!acc) { errors.push('科目 ' + r.code + ' 不存在'); return; }

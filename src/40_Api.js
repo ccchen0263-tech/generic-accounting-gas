@@ -126,6 +126,7 @@ HANDLERS.voidVoucher = function (p, s) {
     var rows = loadLines_().filter(function (l) { return l.no === p.no; });
     if (!rows.length) throw new Error('找不到傳票 ' + p.no);
     if (rows[0].status === '作廢') throw new Error('此傳票已作廢');
+    if (rows[0].source === '月底盤點') throw new Error('月底盤點傳票請到「月底盤點」重新盤點或取消盤點');
     if (lockedPeriodsMap_()[rows[0].date.slice(0, 7)]) throw new Error(rows[0].date.slice(0, 7) + ' 已鎖帳，不能作廢');
     var reason = str_(p.reason);
     if (!reason) throw new Error('請填寫作廢原因');
@@ -138,12 +139,29 @@ HANDLERS.voidVoucher = function (p, s) {
 
 // ───────────── 帳簿與報表 ─────────────
 
+/**
+ * 查詢期間：開帳日之前沒有資料。
+ * 起始日早於開帳日時自動從開帳日起算；整段都在開帳日之前則提示沒有資料。
+ */
 function rangeOf_(p) {
   var today = todayText_();
   var from = isValidDate_(p.from) ? p.from : monthStart_(today.slice(0, 7));
   var to = isValidDate_(p.to) ? p.to : today;
   if (from > to) throw new Error('起始日不可晚於結束日');
+  var od = loadSettings_().openingDate;
+  if (od) {
+    if (to < od) throw new Error('查詢期間早於開帳日 ' + od + '，系統沒有這段期間的資料');
+    if (from < od) from = od;
+  }
   return { from: from, to: to };
+}
+
+/** 資產負債表等「截至某日」的查詢：最早只能查開帳日前一天（＝期初餘額） */
+function asOfOf_(asOf) {
+  var d = isValidDate_(asOf) ? asOf : todayText_();
+  var od = loadSettings_().openingDate;
+  if (od && d < addDays_(od, -1)) throw new Error('查詢日期早於開帳日 ' + od + '，系統沒有這段期間的資料；最早可查 ' + addDays_(od, -1) + '（期初餘額）');
+  return d;
 }
 
 HANDLERS.journal = function (p) {
@@ -173,7 +191,7 @@ HANDLERS.incomeStatement = function (p) {
 };
 
 HANDLERS.balanceSheet = function (p) {
-  var asOf = isValidDate_(p.asOf) ? p.asOf : todayText_();
+  var asOf = asOfOf_(p.asOf);
   var settings = loadSettings_();
   var bs = balanceSheet_(loadAccounts_(), loadOpening_(), loadLines_(), asOf, settings.fyStartMonth);
   bs.companyName = settings.companyName;
@@ -196,7 +214,7 @@ HANDLERS.dashboard = function () {
 /** 把三張報表寫到試算表分頁，業主可直接在試算表查看 */
 HANDLERS.writeReports = function (p, s) {
   var r = rangeOf_(p);
-  var asOf = isValidDate_(p.asOf) ? p.asOf : r.to;
+  var asOf = asOfOf_(isValidDate_(p.asOf) ? p.asOf : r.to);
   writeReportSheets_(r.from, r.to, asOf);
   log_(s.username, '寫入報表分頁', r.from + '～' + r.to + '，資產負債表截至 ' + asOf);
   return { from: r.from, to: r.to, asOf: asOf };
@@ -295,14 +313,25 @@ function stocktakeRecords_(period) {
   return readObjects_(SHEETS.STOCKTAKE).filter(function (o) { return str_(o['期間']) === period; });
 }
 
-HANDLERS.stocktakePreview = function (p) {
-  var period = str_(p.period);
+function checkStocktakePeriod_(period) {
   if (!isValidPeriod_(period)) throw new Error('期間格式需為 yyyy-MM');
-  var records = stocktakeRecords_(period);
-  var lines = loadLines_();
+  var od = loadSettings_().openingDate;
+  if (od && monthEnd_(period) < od) throw new Error(period + ' 早於開帳日 ' + od + '，不能盤點');
+}
+
+/** 本期有效（未作廢）的盤點傳票號碼 */
+function activeStocktakeNos_(records, lines) {
   var priorNos = {};
   records.forEach(function (r) { if (str_(r['傳票號碼'])) priorNos[str_(r['傳票號碼'])] = true; });
-  var activeNos = Object.keys(priorNos).filter(function (no) { return lines.some(function (l) { return l.no === no && l.status !== '作廢'; }); });
+  return Object.keys(priorNos).filter(function (no) { return lines.some(function (l) { return l.no === no && l.status !== '作廢'; }); });
+}
+
+HANDLERS.stocktakePreview = function (p) {
+  var period = str_(p.period);
+  checkStocktakePeriod_(period);
+  var records = stocktakeRecords_(period);
+  var lines = loadLines_();
+  var activeNos = activeStocktakeNos_(records, lines);
   var preview = stocktakePreview_(loadAccounts_(), loadOpening_(), lines, period, activeNos);
   var counted = {};
   records.forEach(function (r) { counted[str_(r['存貨科目'])] = toAmount_(r['盤點金額']); });
@@ -313,19 +342,22 @@ HANDLERS.stocktakePreview = function (p) {
 HANDLERS.stocktakeSave = function (p, s) {
   return withLock_(function () {
     var period = str_(p.period);
-    if (!isValidPeriod_(period)) throw new Error('期間格式需為 yyyy-MM');
-    if (lockedPeriodsMap_()[period]) throw new Error(period + ' 已鎖帳');
+    checkStocktakePeriod_(period);
+    var locked = lockedPeriodsMap_();
+    if (locked[period]) throw new Error(period + ' 已鎖帳');
     var lines = loadLines_();
     var records = stocktakeRecords_(period);
-    var priorNos = {};
-    records.forEach(function (r) { if (str_(r['傳票號碼'])) priorNos[str_(r['傳票號碼'])] = true; });
-    var activeNos = Object.keys(priorNos).filter(function (no) { return lines.some(function (l) { return l.no === no && l.status !== '作廢'; }); });
+    var activeNos = activeStocktakeNos_(records, lines);
     var accounts = loadAccounts_();
     var preview = stocktakePreview_(accounts, loadOpening_(), lines, period, activeNos);
     var built = buildStocktakeVoucher_(period, preview, p.counts || {});
     if (!built.detail.length) throw new Error('請至少填一個存貨科目的盤點金額');
 
-    // 先作廢舊的盤點傳票，再產生新的
+    // 先確認新傳票可以成立，才作廢舊的（避免舊傳票作廢了、新傳票卻存不進去）
+    if (built.voucher) {
+      var check = validateVoucher_(built.voucher, { accountsByCode: indexAccounts_(accounts), openingDate: loadSettings_().openingDate, lockedPeriods: locked });
+      if (check.errors.length) throw new Error('無法產生盤點傳票：\n' + check.errors.join('\n'));
+    }
     var now = nowText_();
     lines.forEach(function (l) {
       if (activeNos.indexOf(l.no) >= 0) updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now });
@@ -344,6 +376,28 @@ HANDLERS.stocktakeSave = function (p, s) {
     }));
     log_(s.username, '月底盤點', period + (newNo ? ' 產生傳票 ' + newNo : ' 無差額') + (activeNos.length ? '，作廢舊傳票 ' + activeNos.join('、') : ''));
     return { period: period, voucherNo: newNo, detail: built.detail, voided: activeNos };
+  });
+};
+
+/** 取消本月盤點：作廢盤點傳票並刪除盤點紀錄 */
+HANDLERS.stocktakeClear = function (p, s) {
+  return withLock_(function () {
+    var period = str_(p.period);
+    checkStocktakePeriod_(period);
+    if (lockedPeriodsMap_()[period]) throw new Error(period + ' 已鎖帳');
+    var reason = str_(p.reason);
+    if (!reason) throw new Error('請填寫取消原因');
+    var lines = loadLines_();
+    var records = stocktakeRecords_(period);
+    if (!records.length) throw new Error(period + ' 沒有盤點紀錄');
+    var activeNos = activeStocktakeNos_(records, lines);
+    var now = nowText_();
+    lines.forEach(function (l) {
+      if (activeNos.indexOf(l.no) >= 0) updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now });
+    });
+    deleteRowNumbers_(SHEETS.STOCKTAKE, records.map(function (r) { return r._row; }));
+    log_(s.username, '取消月底盤點', period + '：' + reason + (activeNos.length ? '，作廢傳票 ' + activeNos.join('、') : ''));
+    return { period: period, voided: activeNos };
   });
 };
 
@@ -504,6 +558,9 @@ HANDLERS.saveSettings = function (p, s) {
     if (st.openingDate && !isValidDate_(st.openingDate)) errors.push('開帳日格式需為 yyyy-MM-dd');
     if (!st.industries.length) st.industries = ['通用'];
     var old = loadSettings_();
+    if (old.openingDate && !st.openingDate && (loadOpening_().length || loadLines_().length)) {
+      errors.push('已有期初餘額或傳票，開帳日不能清空');
+    }
     if (st.openingDate && st.openingDate !== old.openingDate) {
       var earlier = loadLines_().filter(function (l) { return l.status !== '作廢' && l.date < st.openingDate; });
       if (earlier.length) errors.push('已有早於 ' + st.openingDate + ' 的傳票（' + earlier[0].no + '），不能把開帳日改晚');
@@ -559,7 +616,8 @@ HANDLERS.changePassword = function (p, s) {
   if (err) throw new Error(err);
   setPassword_(u, p.newPassword);
   log_(s.username, '變更密碼', '');
-  return { ok: true };
+  // 舊的登入（含其他裝置）全部失效，回傳新的登入憑證給目前這個畫面
+  return issueSession_(findUser_(s.username));
 };
 
 HANDLERS.listLog = function (p) {

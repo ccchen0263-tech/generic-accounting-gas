@@ -255,6 +255,16 @@
     set: function (k, v) { try { window.sessionStorage.setItem(k, v); } catch (e) { /* 無法使用時只存在記憶體 */ } },
     del: function (k) { try { window.sessionStorage.removeItem(k); } catch (e) { /* 忽略 */ } }
   };
+  // 每個瀏覽器一個識別碼，登入錯誤次數依瀏覽器計算
+  var clientId = (function () {
+    var id = null;
+    try { id = window.localStorage.getItem('acct_cid'); } catch (e) { id = null; }
+    if (!id) {
+      id = 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try { window.localStorage.setItem('acct_cid', id); } catch (e) { /* 無法保存時每次重新產生 */ }
+    }
+    return id;
+  })();
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
   function esc(s) {
@@ -406,7 +416,7 @@
     btn.disabled = true;
     $('#loginMsg').textContent = '';
     busy(true);
-    rpc('login', $('#loginUser').value.trim(), $('#loginPass').value).then(function (r) {
+    rpc('login', $('#loginUser').value.trim(), $('#loginPass').value, clientId).then(function (r) {
       busy(false);
       btn.disabled = false;
       if (!r.ok) { $('#loginMsg').textContent = r.error; return; }
@@ -643,7 +653,7 @@
             '</tbody></table></div><div class="voucher-actions">' +
             (!isVoid && !locked && v.source !== '月底盤點' && can('saveVoucher') ? '<button class="btn small" type="button" data-act="edit">修改</button>' : '') +
             (!isVoid && !locked && can('saveVoucher') ? '<button class="btn small" type="button" data-act="copy">複製成新傳票</button>' : '') +
-            (!isVoid && !locked && can('voidVoucher') ? '<button class="btn small danger" type="button" data-act="void">作廢</button>' : '') +
+            (!isVoid && !locked && v.source !== '月底盤點' && can('voidVoucher') ? '<button class="btn small danger" type="button" data-act="void">作廢</button>' : '') +
             '</div></div></div>';
         }).join('');
         $all('.voucher', list).forEach(function (card) {
@@ -760,14 +770,15 @@
         }
         var html = '';
         if (r.locked) html += '<div class="notice warn">' + esc(r.period) + ' 已鎖帳，只能查看。</div>';
-        if (r.priorVouchers.length) html += '<div class="notice info">本月已做過盤點（傳票 ' + esc(r.priorVouchers.join('、')) + '）。重新儲存會作廢舊傳票，依新數字重新產生。</div>';
+        var hasPrior = r.rows.some(function (x) { return x.counted !== ''; });
+        if (hasPrior) html += '<div class="notice info">本月已做過盤點' + (r.priorVouchers.length ? '（傳票 ' + esc(r.priorVouchers.join('、')) + '）' : '') + '。重新儲存會作廢舊傳票，依新數字重新產生。</div>';
         html += '<div class="card"><div class="table-wrap"><table><thead><tr><th>存貨科目</th><th class="num">帳上金額（' + esc(r.endDate) + '）</th><th class="num">盤點金額</th><th class="num">差額</th><th>差額沖轉到</th></tr></thead><tbody>' +
           r.rows.map(function (row) {
             return '<tr data-code="' + esc(row.code) + '" data-book="' + row.book + '"><td><span class="code">' + esc(row.code) + '</span> ' + esc(row.name) + '</td><td class="num">' + fmt(row.book) + '</td>' +
               '<td class="num"><input class="num st-in" inputmode="numeric" aria-label="' + esc(row.name) + ' 盤點金額" value="' + (row.counted === '' ? '' : row.counted) + '"' + (r.locked ? ' disabled' : '') + ' style="max-width:150px"></td>' +
               '<td class="num st-diff"></td><td><span class="code">' + esc(row.costCode) + '</span> ' + esc(row.costName) + '</td></tr>';
           }).join('') + '</tbody></table></div>' +
-          (r.locked || !can('stocktakeSave') ? '' : '<div class="modal-foot"><button class="btn primary" type="button" id="stSave">產生盤點調整傳票</button></div>') + '</div>';
+          (r.locked || !can('stocktakeSave') ? '' : '<div class="modal-foot">' + (hasPrior ? '<button class="btn danger" type="button" id="stClear">取消本月盤點</button>' : '') + '<button class="btn primary" type="button" id="stSave">產生盤點調整傳票</button></div>') + '</div>';
         b.innerHTML = html;
         var upd = function () {
           $all('tr[data-code]', b).forEach(function (tr) {
@@ -778,6 +789,13 @@
         };
         $all('.st-in', b).forEach(function (i) { i.addEventListener('input', upd); });
         upd();
+        var clr = $('#stClear', b);
+        if (clr) clr.onclick = function () {
+          ask('取消 ' + r.period + ' 盤點', '會作廢本月的盤點調整傳票並刪除盤點紀錄，成本回到本月進貨數。', { input: '取消原因', okText: '取消盤點', danger: true }).then(function (reason) {
+            if (!reason) return;
+            call('stocktakeClear', { period: r.period, reason: reason }).then(function () { toast('已取消 ' + r.period + ' 盤點'); load(); }).catch(function (e) { toast(e.message, true); });
+          });
+        };
         var save = $('#stSave', b);
         if (save) save.onclick = function () {
           var counts = {};
@@ -1248,8 +1266,10 @@
       ev.preventDefault();
       $('#pwErr').textContent = '';
       if ($('#pwNew').value !== $('#pwNew2').value) { $('#pwErr').textContent = '兩次輸入的新密碼不同'; return; }
-      call('changePassword', { oldPassword: $('#pwOld').value, newPassword: $('#pwNew').value }).then(function () {
-        toast('密碼已變更');
+      call('changePassword', { oldPassword: $('#pwOld').value, newPassword: $('#pwNew').value }).then(function (r) {
+        S.token = r.token;
+        store.set('acct_token', S.token);
+        toast('密碼已變更，其他裝置的登入已登出');
         $('#pwForm').reset();
       }).catch(function (e) { $('#pwErr').textContent = e.message; });
     };

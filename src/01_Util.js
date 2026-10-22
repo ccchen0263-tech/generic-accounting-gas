@@ -94,7 +94,7 @@ function bytesToHex_(bytes) {
 
 /** 統一編號檢查碼（財政部 2023 起新規則：可被 5 整除；舊規則可被 10 整除仍有效） */
 function isValidTaxId_(id) {
-  if (!/^\d{8}$/.test(id)) return false;
+  if (!/^\d{8}$/.test(id) || id === '00000000') return false;
   var w = [1, 2, 1, 2, 1, 2, 4, 1];
   var sum = 0;
   for (var i = 0; i < 8; i++) {

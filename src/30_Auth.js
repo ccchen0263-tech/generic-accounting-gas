@@ -41,28 +41,48 @@ function findUser_(username) {
   return loadUsers_().filter(function (u) { return u.username.toLowerCase() === key; })[0] || null;
 }
 
-/** 登入：錯 5 次鎖 10 分鐘 */
-function login(username, password) {
+/**
+ * 登入防護（Apps Script 取不到訪客 IP，因此分兩層）：
+ *  1. 同一個瀏覽器（clientId）錯 5 次 → 這個瀏覽器鎖 10 分鐘
+ *  2. 同一帳號 10 分鐘內全站錯超過 20 次 → 之後每次嘗試延遲 3 秒（減緩猜密碼，但不擋正確密碼，避免被惡意鎖住帳號）
+ */
+function login(username, password, clientId) {
   try {
     var cache = CacheService.getScriptCache();
-    var key = 'fail_' + str_(username).toLowerCase();
+    var user = str_(username).toLowerCase();
+    var cid = str_(clientId).replace(/[^A-Za-z0-9-]/g, '').slice(0, 40);
+    var key = 'fail_' + user + '_' + cid;
+    var gkey = 'gfail_' + user;
     var fails = Number(cache.get(key)) || 0;
+    var gfails = Number(cache.get(gkey)) || 0;
     if (fails >= LOGIN_MAX_FAILS) return { ok: false, error: '密碼錯誤次數過多，請 10 分鐘後再試' };
+    if (gfails >= LOGIN_GLOBAL_SLOWDOWN) Utilities.sleep(3000);
     var u = findUser_(username);
     if (!u || !u.enabled || hashPassword_(u.salt, String(password || '')) !== u.hash) {
       cache.put(key, String(fails + 1), LOGIN_LOCK_SECONDS);
+      cache.put(gkey, String(gfails + 1), LOGIN_LOCK_SECONDS);
       return { ok: false, error: '帳號或密碼錯誤' };
     }
     cache.remove(key);
-    var token = Utilities.getUuid();
-    var session = { username: u.username, name: u.name, role: u.role };
-    cache.put('tok_' + token, JSON.stringify(session), SESSION_SECONDS);
+    var issued = issueSession_(u);
     updateCells_(SHEETS.USERS, u._row, { '最後登入': nowText_() });
     log_(u.username, '登入', '');
-    return { ok: true, data: { token: token, user: session } };
+    return { ok: true, data: issued };
   } catch (e) {
     return { ok: false, error: e.message };
   }
+}
+
+/** 憑證版本：密碼一改，雜湊就變，舊的登入憑證全部失效 */
+function credTag_(u) {
+  return u.hash.slice(0, 16);
+}
+
+function issueSession_(u) {
+  var token = Utilities.getUuid();
+  var session = { username: u.username, name: u.name, role: u.role, cred: credTag_(u) };
+  CacheService.getScriptCache().put('tok_' + token, JSON.stringify(session), SESSION_SECONDS);
+  return { token: token, user: { username: u.username, name: u.name, role: u.role } };
 }
 
 function logout(token) {
@@ -77,10 +97,8 @@ function sessionFromToken_(token) {
   var s = JSON.parse(raw);
   // 每次確認帳號仍啟用、角色以帳號表為準（改權限立即生效）
   var u = findUser_(s.username);
-  if (!u || !u.enabled) return null;
-  s.role = u.role;
-  s.name = u.name;
-  return s;
+  if (!u || !u.enabled || s.cred !== credTag_(u)) return null;
+  return { username: u.username, name: u.name, role: u.role };
 }
 
 function can_(role, action) {

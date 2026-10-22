@@ -330,3 +330,70 @@ test('手動貼上版 dist/Code.gs 可獨立載入並完成初始設定與登入
   assert.ok(!html.includes('<?'), 'Index.html 不可殘留樣板標記');
   assert.ok(html.includes('google.script.run'));
 });
+
+test('審查修正：盤點傳票不能一般作廢，可取消盤點', () => {
+  const { call } = restaurantBooks();
+  const r = call('stocktakeSave', { period: '2026-01', counts: { '1166': 8000 } });
+  assert.throws(() => call('voidVoucher', { no: r.voucherNo, reason: 'x' }), /月底盤點/);
+  assert.throws(() => call('stocktakeClear', { period: '2026-01' }), /原因/);
+  call('stocktakeClear', { period: '2026-01', reason: '盤點數字錯誤' });
+  assert.equal(call('incomeStatement', { from: '2026-01-01', to: '2026-01-31' }).current.summary.cost, 40000);
+  assert.equal(call('stocktakePreview', { period: '2026-01' }).rows.find((x) => x.code === '1166').counted, '');
+});
+
+test('審查修正：重做盤點失敗時，舊盤點傳票保持有效', () => {
+  const { call } = restaurantBooks();
+  const r1 = call('stocktakeSave', { period: '2026-01', counts: { '1166': 8000 } });
+  call('toggleAccount', { code: '5171', enabled: false });
+  assert.throws(() => call('stocktakeSave', { period: '2026-01', counts: { '1166': 9000 } }), /已停用/);
+  assert.equal(call('getVoucher', { no: r1.voucherNo }).status, '有效');
+  assert.equal(call('incomeStatement', { from: '2026-01-01', to: '2026-01-31' }).current.summary.cost, 32000);
+});
+
+test('審查修正：改密碼或被重設後，舊登入全部失效', () => {
+  const { app, token, call, pw } = setupApp();
+  const other = app.login('admin', pw, 'phone').data.token;
+  const r = call('changePassword', { oldPassword: pw, newPassword: 'NewPass1234' });
+  assert.equal(app.api(other, 'bootstrap', {}).relogin, true);
+  assert.equal(app.api(token, 'bootstrap', {}).relogin, true);
+  assert.equal(app.api(r.token, 'bootstrap', {}).ok, true);
+  const k = app.api(r.token, 'saveUser', { isNew: true, username: 'acct', name: '會計', role: '會計' }).data;
+  const kt = app.login('acct', k.tempPassword).data.token;
+  app.api(r.token, 'resetPassword', { username: 'acct' });
+  assert.equal(app.api(kt, 'bootstrap', {}).relogin, true);
+});
+
+test('審查修正：開帳日之前查不到資料，開帳日前一天＝期初', () => {
+  const { call } = restaurantBooks();
+  assert.throws(() => call('balanceSheet', { asOf: '2025-06-30' }), /早於開帳日/);
+  const bs = call('balanceSheet', { asOf: '2025-12-31' });
+  assert.equal(bs.summary.assets, 800000);
+  assert.throws(() => call('trialBalance', { from: '2025-01-01', to: '2025-12-31' }), /早於開帳日/);
+  const tb = call('trialBalance', { from: '2025-12-01', to: '2026-01-31' });
+  assert.equal(tb.from, '2026-01-01');
+  assert.equal(tb.rows.find((x) => x.code === '1113').openDebit, 400000);
+  assert.throws(() => call('stocktakePreview', { period: '2025-12' }), /早於開帳日/);
+});
+
+test('審查修正：期初金額亂打不會被當成空白、統編 00000000 無效、開帳日不能清空', () => {
+  const { app, call } = restaurantBooks();
+  assert.throws(() => call('saveOpening', { rows: [{ code: '1111', debit: 'abc' }] }), /不是數字/);
+  assert.equal(call('getOpening').rows.find((x) => x.code === '1111').debit, 100000);
+  assert.equal(app.isValidTaxId_('00000000'), false);
+  assert.throws(() => call('saveSettings', { companyName: 'A', industries: ['餐飲'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '' }), /不能清空/);
+});
+
+test('審查修正：以 = 開頭的摘要原樣保存，不會被當成公式', () => {
+  const { call } = restaurantBooks();
+  const v = call('saveVoucher', { date: '2026-01-31', type: '支出', memo: '=1+1 測試', lines: [{ code: '6121', debit: 1, party: '+886 廠商' }, { code: '1113', credit: 1 }] });
+  const got = call('getVoucher', { no: v.no });
+  assert.equal(got.lines[0].memo, '=1+1 測試');
+  assert.equal(got.lines[0].party, '+886 廠商');
+});
+
+test('審查修正：別人亂試 admin 密碼不會鎖住真正的管理者', () => {
+  const { app, pw } = setupApp();
+  for (let i = 0; i < 30; i++) app.login('admin', 'wrong', 'attacker');
+  assert.match(app.login('admin', 'wrong', 'attacker').error, /過多/);
+  assert.equal(app.login('admin', pw, 'real-admin').ok, true);
+});
