@@ -397,3 +397,9 @@ test('審查修正：別人亂試 admin 密碼不會鎖住真正的管理者', (
   assert.match(app.login('admin', 'wrong', 'attacker').error, /過多/);
   assert.equal(app.login('admin', pw, 'real-admin').ok, true);
 });
+
+test('審查修正：盤點對應成本科目只能設在流動資產（存貨）科目', () => {
+  const { call } = restaurantBooks();
+  assert.throws(() => call('saveAccount', { account: { code: '4121', name: '餐飲收入－內用', block: '營業收入', stockCost: '5171' } }), /只有流動資產/);
+  assert.throws(() => call('saveAccount', { isNew: true, account: { code: '2199', name: '測試', block: '流動負債', stockCost: '5171' } }), /只有流動資產/);
+});

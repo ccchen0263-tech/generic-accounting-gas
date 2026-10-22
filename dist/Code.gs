@@ -445,6 +445,7 @@ function validateAccount_(acc, accountsByCode, isNew) {
   }
   if (acc.normal && acc.normal !== '借' && acc.normal !== '貸') errors.push('正常餘額只能是「借」或「貸」');
   if (isNew && accountsByCode[code]) errors.push('科目代碼 ' + code + ' 已存在');
+  if (acc.stockCost && acc.block !== '流動資產') errors.push('只有流動資產的存貨科目可以設定盤點對應成本科目');
   if (acc.stockCost) {
     var target = accountsByCode[acc.stockCost];
     if (!target) errors.push('盤點對應成本科目 ' + acc.stockCost + ' 不存在，請先加入該科目');
