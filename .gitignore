@@ -4,3 +4,4 @@ tests/ui/shots/
 .clasprc.json
 *.log
 .DS_Store
+.clasp.json
