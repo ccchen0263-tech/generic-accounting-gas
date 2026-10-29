@@ -5,3 +5,5 @@ tests/ui/shots/
 *.log
 .DS_Store
 .clasp.json
+tools/seed-demo.json
+tools/demo/
