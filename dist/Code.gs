@@ -2335,6 +2335,8 @@ function setup() {
       var sh = hub.getSheetByName(SHEETS.SETTINGS);
       if (sh) firstName = loadSettings_().companyName;
     } catch (e) { firstName = ''; }
+    // 沒有公司設定時，以試算表檔名「公司名稱｜…」的前半段當作公司名稱
+    if (!firstName) { try { firstName = str_(hub.getName()).split('｜')[0]; } catch (e) { firstName = ''; } }
     appendObjects_(SHEETS.COMPANIES, [{ '公司代碼': 'C01', '公司名稱': firstName || '公司一', '試算表ID': hub.getId(), '啟用': '是', '建立時間': nowText_() }]);
   }
 

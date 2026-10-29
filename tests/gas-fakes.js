@@ -132,6 +132,7 @@
     this.sheets = sheets;
     this.name = name || '';
     this.getId = function () { return id || 'fake-spreadsheet-id'; };
+    this.getName = function () { return self.name; };
     this.getUrl = function () { return 'https://docs.google.com/spreadsheets/d/' + self.getId() + '/edit'; };
     this.deleteSheet = function (sh) { delete sheets[sh.getName()]; };
     if (withDefaultSheet) sheets['工作表1'] = new FakeSheet('工作表1');

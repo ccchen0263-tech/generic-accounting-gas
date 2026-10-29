@@ -538,3 +538,13 @@ test('傳票範本：依產業顯示，含稅金額自動拆未稅與 5% 稅額'
     assert.equal(dr, cr, t.id + ' 借貸不平衡');
   });
 });
+
+test('全新部署：以試算表檔名當第一家公司名稱', () => {
+  const app = loadApp();
+  app.__ss.name = '鯉魚餐飲有限公司｜集團會計系統（主檔）';
+  app.setup();
+  const c = app.loadCompanies_()[0];
+  assert.equal(c.name, '鯉魚餐飲有限公司');
+  app.CTX.company = c;
+  assert.equal(app.loadSettings_().companyName, '鯉魚餐飲有限公司');
+});
