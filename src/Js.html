@@ -1,0 +1,1260 @@
+<script>
+(function () {
+  'use strict';
+
+  // ───────────── 狀態與工具 ─────────────
+  var S = { token: null, boot: null, page: 'home', acctMap: {}, companyId: null };
+  try { S.companyId = window.localStorage.getItem('acct_company'); } catch (e) { S.companyId = null; }
+  var CO_COLORS = ['#0f6e66', '#7a4bb3', '#b4541a', '#1f5fa8', '#8a6d00', '#a02c55'];
+  var store = {
+    get: function (k) { try { return window.sessionStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { window.sessionStorage.setItem(k, v); } catch (e) { /* 無法使用時只存在記憶體 */ } },
+    del: function (k) { try { window.sessionStorage.removeItem(k); } catch (e) { /* 忽略 */ } }
+  };
+  // 每個瀏覽器一個識別碼，登入錯誤次數依瀏覽器計算
+  var clientId = (function () {
+    var id = null;
+    try { id = window.localStorage.getItem('acct_cid'); } catch (e) { id = null; }
+    if (!id) {
+      id = 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try { window.localStorage.setItem('acct_cid', id); } catch (e) { /* 無法保存時每次重新產生 */ }
+    }
+    return id;
+  })();
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function fmt(n) {
+    n = Number(n) || 0;
+    var s = Math.abs(n).toLocaleString('zh-TW');
+    return n < 0 ? '-' + s : s;
+  }
+  function money(n) { return '<span class="' + (Number(n) < 0 ? 'neg' : '') + '">' + fmt(n) + '</span>'; }
+  function amt(v) {
+    if (v === '' || v === null || v === undefined) return 0;
+    var n = Number(String(v).replace(/[,\s]/g, ''));
+    return isFinite(n) ? n : NaN;
+  }
+  function pct(n, base) { return base ? (Math.round(n / base * 1000) / 10).toFixed(1) + '%' : ''; }
+  function can(a) { return !!(S.boot && S.boot.allowed.indexOf(a) >= 0); }
+
+  // 日期
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function daysIn(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+  function monthEnd(p) { return p + '-' + pad(daysIn(+p.slice(0, 4), +p.slice(5, 7))); }
+  function addMonths(p, n) {
+    var y = +p.slice(0, 4), m = +p.slice(5, 7) + n;
+    while (m < 1) { m += 12; y--; }
+    while (m > 12) { m -= 12; y++; }
+    return y + '-' + pad(m);
+  }
+  function today() { return S.boot ? S.boot.today : new Date().toISOString().slice(0, 10); }
+  function fyStart(d) {
+    var sm = (S.boot && S.boot.settings.fyStartMonth) || 1;
+    var y = +d.slice(0, 4), m = +d.slice(5, 7);
+    if (m < sm) y--;
+    return y + '-' + pad(sm) + '-01';
+  }
+  function quickRange(kind) {
+    var t = today(), p = t.slice(0, 7);
+    if (kind === 'thisMonth') return { from: p + '-01', to: monthEnd(p) };
+    if (kind === 'lastMonth') { var lp = addMonths(p, -1); return { from: lp + '-01', to: monthEnd(lp) }; }
+    var fs = fyStart(t);
+    if (kind === 'thisYear') { var fe = addMonths(fs.slice(0, 7), 11); return { from: fs, to: monthEnd(fe) }; }
+    if (kind === 'lastYear') { var ls = addMonths(fs.slice(0, 7), -12); return { from: ls + '-01', to: monthEnd(addMonths(ls, 11)) }; }
+    return null;
+  }
+
+  // ───────────── 與伺服器溝通 ─────────────
+  var busyCount = 0;
+  function busy(on) {
+    busyCount += on ? 1 : -1;
+    if (busyCount < 0) busyCount = 0;
+    $('#busy').hidden = busyCount === 0;
+  }
+  function rpc(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      var runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(function (e) {
+        reject(new Error(e && e.message ? e.message : '連線失敗，請稍後再試'));
+      });
+      runner[fn].apply(runner, args);
+    });
+  }
+  function call(action, payload) {
+    busy(true);
+    payload = Object.assign({}, payload || {});
+    if (S.companyId) payload._company = S.companyId;
+    return rpc('api', S.token, action, payload).then(function (r) {
+      busy(false);
+      if (!r.ok) {
+        if (r.relogin) showLogin(r.error);
+        if (r.switchCompany) { S.companyId = null; store.del('acct_company'); start(); }
+        throw new Error(r.error);
+      }
+      return r.data;
+    }, function (e) { busy(false); throw e; });
+  }
+
+  var toastTimer = null;
+  function toast(msg, bad) {
+    var t = $('#toast');
+    t.textContent = msg;
+    t.className = 'toast' + (bad ? ' bad' : '');
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, bad ? 6000 : 3000);
+  }
+
+  // ───────────── 對話框 ─────────────
+  var lastFocus = null;
+  function openModal(title, html, opts) {
+    opts = opts || {};
+    lastFocus = document.activeElement;
+    $('#modalTitle').textContent = title;
+    $('#modalBody').innerHTML = html;
+    $('.modal-card').className = 'modal-card' + (opts.narrow ? ' narrow' : '');
+    $('#modal').hidden = false;
+    var first = $('#modalBody input, #modalBody select, #modalBody textarea, #modalBody button');
+    if (first) first.focus();
+    return $('#modalBody');
+  }
+  function closeModal() {
+    $('#modal').hidden = true;
+    $('#modalBody').innerHTML = '';
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  /** 確認或輸入框；回傳 Promise：取消為 null，確認為 true 或輸入文字 */
+  function ask(title, message, opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      var body = openModal(title,
+        '<p>' + esc(message).replace(/\n/g, '<br>') + '</p>' +
+        (opts.input ? '<label>' + esc(opts.input) + '<input id="askInput" autocomplete="off"></label>' : '') +
+        '<p class="error-text" id="askErr"></p>' +
+        '<div class="modal-foot"><button class="btn" type="button" id="askCancel">取消</button>' +
+        '<button class="btn ' + (opts.danger ? 'danger' : 'primary') + '" type="button" id="askOk">' + esc(opts.okText || '確定') + '</button></div>',
+        { narrow: true });
+      var done = function (v) { closeModal(); resolve(v); };
+      $('#askCancel', body).onclick = function () { done(null); };
+      $('#askOk', body).onclick = function () {
+        if (opts.input) {
+          var v = $('#askInput', body).value.trim();
+          if (!v) { $('#askErr', body).textContent = '請填寫' + opts.input; return; }
+          done(v);
+        } else done(true);
+      };
+      if (opts.input) $('#askInput', body).focus(); else $('#askOk', body).focus();
+    });
+  }
+  function showTempPassword(username, pw) {
+    var body = openModal('臨時密碼',
+      '<p>帳號 <b>' + esc(username) + '</b> 的臨時密碼如下，<b>只會顯示這一次</b>。請私下交給本人，並請對方登入後立即變更密碼。</p>' +
+      '<div class="pw-box">' + esc(pw) + '</div>' +
+      '<div class="modal-foot"><button class="btn primary" type="button" id="pwOk">我已記下</button></div>', { narrow: true });
+    $('#pwOk', body).onclick = closeModal;
+  }
+
+  // ───────────── 登入 ─────────────
+  function showLogin(msg) {
+    S.token = null;
+    store.del('acct_token');
+    $('#app').hidden = true;
+    $('#login').hidden = false;
+    $('#loginMsg').textContent = msg || '';
+    closeModal();
+    $('#loginUser').focus();
+  }
+  $('#loginForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var btn = $('#loginBtn');
+    btn.disabled = true;
+    $('#loginMsg').textContent = '';
+    busy(true);
+    rpc('login', $('#loginUser').value.trim(), $('#loginPass').value, clientId).then(function (r) {
+      busy(false);
+      btn.disabled = false;
+      if (!r.ok) { $('#loginMsg').textContent = r.error; return; }
+      S.token = r.data.token;
+      store.set('acct_token', S.token);
+      $('#loginPass').value = '';
+      start();
+    }, function (e) { busy(false); btn.disabled = false; $('#loginMsg').textContent = e.message; });
+  });
+  $('#logoutBtn').addEventListener('click', function () {
+    var t = S.token;
+    showLogin('已登出');
+    rpc('logout', t).catch(function () { /* 忽略 */ });
+  });
+
+  // ───────────── 啟動與選單 ─────────────
+  var PAGES = [
+    { group: '日常作業' },
+    { id: 'home', title: '首頁' },
+    { id: 'vouchers', title: '傳票', need: 'listVouchers' },
+    { id: 'stocktake', title: '月底盤點', need: 'stocktakePreview' },
+    { group: '帳簿與報表' },
+    { id: 'journal', title: '日記簿', need: 'journal' },
+    { id: 'ledger', title: '分類帳', need: 'ledger' },
+    { id: 'tb', title: '試算表', need: 'trialBalance' },
+    { id: 'is', title: '損益表', need: 'incomeStatement' },
+    { id: 'bs', title: '資產負債表', need: 'balanceSheet' },
+    { group: '本公司設定' },
+    { id: 'periods', title: '期間鎖帳', need: 'listPeriods' },
+    { id: 'opening', title: '期初餘額', need: 'getOpening' },
+    { id: 'accounts', title: '會計科目', need: 'listReference' },
+    { id: 'settings', title: '公司設定', need: 'getSettings' },
+    { group: '集團' },
+    { id: 'group', title: '集團報表', need: 'consolidated' },
+    { id: 'companies', title: '公司管理', need: 'listCompanies' },
+    { id: 'users', title: '帳號與權限', need: 'listUsers' },
+    { id: 'log', title: '操作紀錄', need: 'listLog' },
+    { group: '其他' },
+    { id: 'help', title: '操作說明' },
+    { id: 'password', title: '變更密碼' }
+  ];
+
+  function applyBoot(b) {
+    S.boot = b;
+    S.acctMap = {};
+    b.accounts.forEach(function (a) { S.acctMap[a.code] = a; });
+    S.companyId = b.company.id;
+    try { window.localStorage.setItem('acct_company', S.companyId); } catch (e) { /* 忽略 */ }
+    var me = b.companies.filter(function (c) { return c.id === b.company.id; })[0] || { color: 0 };
+    document.documentElement.style.setProperty('--co', coColor(me.color));
+    $('#companyTitle').textContent = b.company.name || b.settings.companyName || b.app.name;
+    var multi = b.companies.length > 1;
+    $('#app').classList.toggle('multi', multi);
+    $('#coWrap').hidden = !multi;
+    $('#coSwitch').innerHTML = b.companies.map(function (c) {
+      return '<option value="' + esc(c.id) + '"' + (c.id === b.company.id ? ' selected' : '') + '>' + esc(c.name) + '</option>';
+    }).join('');
+    $('#whoName').textContent = b.user.name || b.user.username;
+    $('#whoRole').textContent = (b.user.groupRole === '管理者' ? '集團管理者' : b.user.role);
+    document.title = b.company.name + '｜' + b.app.name;
+  }
+  function coColor(i) { return CO_COLORS[(Number(i) || 0) % CO_COLORS.length]; }
+  function coName() { return S.boot ? S.boot.company.name : ''; }
+  $('#coSwitch').addEventListener('change', function () {
+    S.companyId = $('#coSwitch').value;
+    var page = S.page;
+    refreshBoot().then(function () { buildNav(); go(page); toast('已切換到 ' + coName()); }).catch(function (e) { toast(e.message, true); });
+  });
+  function refreshBoot() { return call('bootstrap').then(applyBoot); }
+
+  function buildNav() {
+    var html = '';
+    var pendingGroup = null;
+    PAGES.forEach(function (p) {
+      if (p.group) { pendingGroup = p.group; return; }
+      if (p.need && !can(p.need)) return;
+      if (pendingGroup) { html += '<div class="nav-group">' + esc(pendingGroup) + '</div>'; pendingGroup = null; }
+      html += '<a href="#" data-page="' + p.id + '">' + esc(p.title) + '</a>';
+    });
+    $('#nav').innerHTML = html;
+    $all('#nav a').forEach(function (a) {
+      a.addEventListener('click', function (ev) { ev.preventDefault(); go(a.getAttribute('data-page')); });
+    });
+  }
+
+  function start() {
+    call('bootstrap').then(function (b) {
+      applyBoot(b);
+      $('#login').hidden = true;
+      $('#app').hidden = false;
+      buildNav();
+      go('home');
+    }).catch(function (e) { showLogin(e.message); });
+  }
+
+  $('#menuBtn').addEventListener('click', function () {
+    var open = !$('#nav').classList.contains('open');
+    $('#nav').classList.toggle('open', open);
+    $('#menuBtn').setAttribute('aria-expanded', String(open));
+  });
+  $('#modalClose').addEventListener('click', closeModal);
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && !$('#modal').hidden) closeModal();
+  });
+
+  function go(id) {
+    var page = PAGES.filter(function (p) { return p.id === id; })[0] || PAGES[1];
+    if (page.need && !can(page.need)) page = PAGES[1];
+    S.page = page.id;
+    $all('#nav a').forEach(function (a) { a.classList.toggle('active', a.getAttribute('data-page') === page.id); });
+    $('#nav').classList.remove('open');
+    $('#menuBtn').setAttribute('aria-expanded', 'false');
+    var main = $('#main');
+    main.innerHTML = '<div class="page-head"><h2>' + esc(page.title) + '</h2></div><div id="pageBody"><p class="muted">載入中…</p></div>';
+    var body = $('#pageBody');
+    Promise.resolve().then(function () { return RENDER[page.id](body, main); }).catch(function (e) {
+      body.innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>';
+    });
+    main.focus();
+    window.scrollTo(0, 0);
+  }
+  function setHeadActions(main, html) {
+    var head = $('.page-head', main);
+    var div = document.createElement('div');
+    div.className = 'row no-print';
+    div.innerHTML = html;
+    head.appendChild(div);
+    return div;
+  }
+
+  // 科目選單
+  function acctOptions(filter) {
+    return S.boot.accounts.filter(function (a) { return a.enabled && (!filter || filter(a)); })
+      .sort(function (a, b) { return a.code < b.code ? -1 : 1; })
+      .map(function (a) { return '<option value="' + esc(a.code + ' ' + a.name) + '"></option>'; }).join('');
+  }
+  function parseAcct(v) {
+    v = String(v || '').trim();
+    if (!v) return '';
+    var first = v.split(/\s+/)[0];
+    if (S.acctMap[first]) return first;
+    var byName = S.boot.accounts.filter(function (a) { return a.name === v; })[0];
+    return byName ? byName.code : first;
+  }
+  function acctLabel(code) { var a = S.acctMap[code]; return a ? a.code + ' ' + a.name : code; }
+
+  function rangeControls(el, init, onRun, opts) {
+    opts = opts || {};
+    var chips = opts.asOf
+      ? [['today', '今天'], ['lastMonthEnd', '上月底'], ['lastYearEnd', '上年度底']]
+      : [['thisMonth', '本月'], ['lastMonth', '上月'], ['thisYear', '本年度'], ['lastYear', '上年度']];
+    el.innerHTML = '<div class="toolbar no-print">' +
+      '<div class="chips">' + chips.map(function (c) { return '<button type="button" class="chip" data-q="' + c[0] + '">' + c[1] + '</button>'; }).join('') + '</div>' +
+      (opts.asOf
+        ? '<label class="field">截至日期<input type="date" class="asof" value="' + esc(init.asOf) + '"></label>'
+        : '<label class="field">起<input type="date" class="from" value="' + esc(init.from) + '"></label><label class="field">迄<input type="date" class="to" value="' + esc(init.to) + '"></label>') +
+      (opts.extra || '') +
+      '<button type="button" class="btn primary run">查詢</button></div>';
+    var run = function () {
+      if (opts.asOf) onRun({ asOf: $('.asof', el).value });
+      else onRun({ from: $('.from', el).value, to: $('.to', el).value });
+    };
+    $all('.chip', el).forEach(function (b) {
+      b.onclick = function () {
+        var q = b.getAttribute('data-q');
+        if (opts.asOf) {
+          var t = today();
+          var v = q === 'today' ? t : q === 'lastMonthEnd' ? monthEnd(addMonths(t.slice(0, 7), -1)) : (function () { var fs = fyStart(t); return monthEnd(addMonths(fs.slice(0, 7), -1)); })();
+          $('.asof', el).value = v;
+        } else {
+          var r = quickRange(q);
+          $('.from', el).value = r.from; $('.to', el).value = r.to;
+        }
+        run();
+      };
+    });
+    $('.run', el).onclick = run;
+    run();
+  }
+
+  // ───────────── 各頁面 ─────────────
+  var RENDER = {};
+
+  RENDER.home = function (el) {
+    if (!can('dashboard')) {
+      el.innerHTML = '<div class="card"><p>您好，' + esc(S.boot.user.name) + '。</p><p>您可以在「傳票」查看已登錄的傳票，在「日記簿」依日期查看分錄。</p>' +
+        '<button class="btn primary" type="button" id="goV">查看傳票</button></div>';
+      $('#goV').onclick = function () { go('vouchers'); };
+      return;
+    }
+    return call('dashboard').then(function (d) {
+      var st = S.boot.settings;
+      var html = '';
+      if (S.boot.user.role === '管理者') {
+        var steps = [
+          { done: !!(st.companyName && st.openingDate), text: '到「公司設定」填公司名稱、產業類別與開帳日', page: 'settings' },
+          { done: S.boot.accounts.length > 0, text: '到「會計科目」依產業帶入建議科目，再增刪成自己的科目表', page: 'accounts' },
+          { done: d.openingCount > 0 && d.openingBalanced, text: '到「期初餘額」輸入開帳日當天的資產、負債、權益餘額', page: 'opening' },
+          { done: d.voucherCount > 0, text: '到「傳票」開始記帳；月底到「月底盤點」輸入存貨', page: 'vouchers' }
+        ];
+        if (steps.some(function (s) { return !s.done; })) {
+          html += '<div class="card"><h3 style="margin-top:0">開始使用的四個步驟</h3><ol class="steps">' + steps.map(function (s) {
+            return '<li class="' + (s.done ? 'done' : '') + '"><a href="#" data-go="' + s.page + '">' + esc(s.text) + '</a></li>';
+          }).join('') + '</ol></div>';
+        }
+      }
+      if (d.openingCount > 0 && !d.openingBalanced) html += '<div class="notice bad">期初餘額借貸不平衡，資產負債表會對不上。請到「期初餘額」修正。</div>';
+      if (!d.balanced) html += '<div class="notice bad">試算表借貸不平衡，請檢查期初餘額。</div>';
+      var m = d.month, y = d.ytd;
+      html += '<h3>' + esc(d.period) + ' 本月</h3><div class="kpis">' +
+        kpi('營業收入', m.revenue, '') +
+        kpi('營業成本', m.cost, d.stocktaken ? (m.revenue ? '毛利率 ' + pct(m.grossProfit, m.revenue) : '') : '本月尚未盤點，目前＝本月進貨') +
+        kpi('營業費用', m.opex, '') +
+        kpi('本月淨利', m.netIncome, '本月傳票 ' + d.voucherCount + ' 張') +
+        '</div><h3>本年度與資金</h3><div class="kpis">' +
+        kpi('本年度營收', y.revenue, '') +
+        kpi('本年度淨利', y.netIncome, y.revenue ? '淨利率 ' + pct(y.netIncome, y.revenue) : '') +
+        kpi('現金及銀行存款', d.cash, '含零用金、電子支付') +
+        kpi('本月狀態', null, d.locked[d.period] ? '已鎖帳' : '尚未鎖帳', d.locked[d.period] ? '已鎖帳' : '開放中') +
+        '</div>';
+      el.innerHTML = html;
+      $all('[data-go]', el).forEach(function (a) { a.onclick = function (ev) { ev.preventDefault(); go(a.getAttribute('data-go')); }; });
+    });
+    function kpi(label, value, sub, text) {
+      return '<div class="kpi"><div class="label">' + esc(label) + '</div><div class="value">' + (text ? esc(text) : money(value)) + '</div><div class="sub">' + esc(sub || '') + '</div></div>';
+    }
+  };
+
+  // ── 傳票 ──
+  RENDER.vouchers = function (el, main) {
+    if (can('saveVoucher')) {
+      var actions = setHeadActions(main, '<button class="btn primary" type="button" id="newV">＋ 新增傳票</button>');
+      $('#newV', actions).onclick = function () { voucherEditor(null, load); };
+    }
+    el.innerHTML = '<div class="toolbar"><label class="field">月份<input type="month" id="vMonth" value="' + today().slice(0, 7) + '"></label>' +
+      '<label class="grow">搜尋（號碼、科目、摘要、往來對象）<input id="vKw" placeholder="例如：租金"></label>' +
+      '<button class="btn" type="button" id="vGo">查詢</button></div><div id="vList"></div>';
+    $('#vGo').onclick = load;
+    $('#vKw').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') load(); });
+    function load() {
+      return call('listVouchers', { period: $('#vMonth').value, keyword: $('#vKw').value }).then(function (r) {
+        var list = $('#vList');
+        if (!r.vouchers.length) { list.innerHTML = '<div class="card muted">' + esc(r.period) + ' 沒有傳票。</div>'; return; }
+        list.innerHTML = r.vouchers.map(function (v, i) {
+          var isVoid = v.status === '作廢';
+          var locked = S.boot.lockedPeriods[v.date.slice(0, 7)];
+          return '<div class="voucher" data-i="' + i + '"><div class="voucher-head" role="button" tabindex="0" aria-expanded="false">' +
+            '<span class="no">' + esc(v.no) + '</span><span>' + esc(v.date) + '</span><span class="muted">' + esc(v.type) + '</span>' +
+            '<span class="memo">' + esc(v.memo) + '</span><span class="num">' + fmt(v.debit) + '</span>' +
+            (isVoid ? '<span class="badge void">作廢</span>' : '') + (v.source === '月底盤點' ? '<span class="badge auto">月底盤點</span>' : '') +
+            (locked ? '<span class="badge lock">已鎖帳</span>' : '') + '</div>' +
+            '<div class="voucher-body" hidden><div class="table-wrap"><table><thead><tr><th>科目</th><th class="num">借方</th><th class="num">貸方</th><th>摘要</th><th>往來對象</th></tr></thead><tbody>' +
+            v.lines.map(function (l) { return '<tr class="' + (isVoid ? 'void' : '') + '"><td><span class="code">' + esc(l.code) + '</span> ' + esc(l.name) + '</td><td class="num">' + (l.debit ? fmt(l.debit) : '') + '</td><td class="num">' + (l.credit ? fmt(l.credit) : '') + '</td><td>' + esc(l.memo) + '</td><td>' + esc(l.party) + '</td></tr>'; }).join('') +
+            '</tbody></table></div><div class="voucher-actions">' +
+            (!isVoid && !locked && v.source !== '月底盤點' && can('saveVoucher') ? '<button class="btn small" type="button" data-act="edit">修改</button>' : '') +
+            (!isVoid && !locked && can('saveVoucher') ? '<button class="btn small" type="button" data-act="copy">複製成新傳票</button>' : '') +
+            (!isVoid && !locked && v.source !== '月底盤點' && can('voidVoucher') ? '<button class="btn small danger" type="button" data-act="void">作廢</button>' : '') +
+            '</div></div></div>';
+        }).join('');
+        $all('.voucher', list).forEach(function (card) {
+          var v = r.vouchers[+card.getAttribute('data-i')];
+          var head = $('.voucher-head', card), body = $('.voucher-body', card);
+          var toggle = function () { body.hidden = !body.hidden; head.setAttribute('aria-expanded', String(!body.hidden)); };
+          head.onclick = toggle;
+          head.onkeydown = function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); } };
+          $all('[data-act]', card).forEach(function (b) {
+            b.onclick = function () {
+              var act = b.getAttribute('data-act');
+              if (act === 'edit') voucherEditor(v, load);
+              if (act === 'copy') voucherEditor({ date: today(), type: v.type, memo: v.memo, lines: v.lines }, load, true);
+              if (act === 'void') ask('作廢傳票 ' + v.no, '作廢後傳票會保留紀錄但不再計入帳上，號碼不會重複使用。', { input: '作廢原因', okText: '作廢', danger: true }).then(function (reason) {
+                if (!reason) return;
+                call('voidVoucher', { no: v.no, reason: reason }).then(function () { toast('已作廢 ' + v.no); load(); }).catch(function (e) { toast(e.message, true); });
+              });
+            };
+          });
+        });
+      }).catch(function (e) { $('#vList').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    }
+    return load();
+  };
+
+  function voucherEditor(v, onSaved, isCopy) {
+    var editing = v && v.no && !isCopy;
+    var title = (editing ? '修改傳票 ' + v.no : '新增傳票') + '｜' + coName();
+    var tpls = (!editing && S.boot.templates) ? S.boot.templates : [];
+    var body = openModal(title,
+      '<datalist id="acctList">' + acctOptions() + '</datalist>' +
+      (tpls.length ? '<div class="tpl-bar"><label class="grow">常用範本（選了會自動帶科目）<select id="edTpl"><option value="">（不套用，自己輸入）</option>' +
+        tpls.map(function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>'; }).join('') + '</select></label>' +
+        '<label class="field" id="edAmtWrap" hidden><span id="edAmtLabel">含稅金額</span><input id="edAmt" class="num" inputmode="numeric" placeholder="例如 10500"></label>' +
+        '<p class="muted small" id="edTplHint" style="flex-basis:100%;margin:0"></p></div>' : '') +
+      '<div class="row"><label class="field">日期<input type="date" id="edDate" value="' + esc(v ? v.date : today()) + '"></label>' +
+      '<label class="field">類型<select id="edType">' + S.boot.voucherTypes.map(function (t) { return '<option' + (v && v.type === t ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select></label>' +
+      '<label class="grow">摘要<input id="edMemo" value="' + esc(v ? v.memo : '') + '" placeholder="例如：一月份店租"></label></div>' +
+      '<h3>分錄</h3><div class="lines" id="edLines"><div class="line head"><span>科目</span><span>借方</span><span>貸方</span><span>摘要（空白＝同上）</span><span>往來對象</span><span></span></div></div>' +
+      '<div class="line-totals"><button class="btn small" type="button" id="edAdd">＋ 加一行</button><span>借方合計 <b id="edDr">0</b></span><span>貸方合計 <b id="edCr">0</b></span><span id="edDiff"></span></div>' +
+      '<p class="error-text" id="edErr" role="alert"></p>' +
+      '<div class="modal-foot"><button class="btn" type="button" id="edCancel">取消</button><button class="btn primary" type="button" id="edSave">儲存</button></div>');
+    var linesEl = $('#edLines', body);
+    function addLine(l) {
+      l = l || {};
+      var row = document.createElement('div');
+      row.className = 'line';
+      row.setAttribute('data-part', l.part || '');
+      row.setAttribute('data-side', l.side || '');
+      row.innerHTML = '<div class="acct"><input list="acctList" class="l-acct" aria-label="科目" placeholder="輸入代碼或名稱" value="' + esc(l.code ? acctLabel(l.code) : '') + '"><div class="acct-name"></div></div>' +
+        '<input class="l-dr num" inputmode="numeric" aria-label="借方" placeholder="借方" value="' + (l.debit ? l.debit : '') + '">' +
+        '<input class="l-cr num" inputmode="numeric" aria-label="貸方" placeholder="貸方" value="' + (l.credit ? l.credit : '') + '">' +
+        '<input class="l-memo line-memo" aria-label="分錄摘要" placeholder="摘要" value="' + esc(l.memo && v && l.memo !== v.memo ? l.memo : '') + '">' +
+        '<input class="l-party" aria-label="往來對象" placeholder="往來對象" value="' + esc(l.party || '') + '">' +
+        '<button class="icon-btn line-del" type="button" aria-label="刪除這一行">✕</button>';
+      linesEl.appendChild(row);
+      var acct = $('.l-acct', row);
+      var showName = function () {
+        var code = parseAcct(acct.value);
+        var a = S.acctMap[code];
+        $('.acct-name', row).textContent = acct.value ? (a ? (a.enabled ? a.block : '已停用') : '找不到此科目') : '';
+        if (a && acct.value !== a.code + ' ' + a.name) acct.value = a.code + ' ' + a.name;
+      };
+      acct.addEventListener('change', showName);
+      showName();
+      $('.l-dr', row).addEventListener('input', totals);
+      $('.l-cr', row).addEventListener('input', totals);
+      $('.line-del', row).onclick = function () { row.remove(); totals(); };
+      return row;
+    }
+    function collect() {
+      return $all('.line:not(.head)', linesEl).map(function (row) {
+        return { code: parseAcct($('.l-acct', row).value), debit: amt($('.l-dr', row).value), credit: amt($('.l-cr', row).value), memo: $('.l-memo', row).value.trim(), party: $('.l-party', row).value.trim() };
+      });
+    }
+    function totals() {
+      var dr = 0, cr = 0;
+      collect().forEach(function (l) { dr += l.debit || 0; cr += l.credit || 0; });
+      $('#edDr', body).textContent = fmt(dr);
+      $('#edCr', body).textContent = fmt(cr);
+      var d = $('#edDiff', body);
+      if (dr === cr && dr > 0) { d.textContent = '借貸平衡'; d.className = 'diff-ok'; }
+      else if (dr || cr) { d.textContent = '差額 ' + fmt(dr - cr); d.className = 'diff-bad'; }
+      else { d.textContent = ''; d.className = ''; }
+      return dr - cr;
+    }
+    (v && v.lines && v.lines.length ? v.lines : [{}, {}]).forEach(addLine);
+    totals();
+    body.addEventListener('input', function () { $('#edErr', body).textContent = ''; });
+    $('#edAdd', body).onclick = function () {
+      var diff = totals();
+      var row = addLine(diff > 0 ? { credit: diff } : diff < 0 ? { debit: -diff } : {});
+      $('.l-acct', row).focus();
+      totals();
+    };
+    // 套用範本
+    var tplSel = $('#edTpl', body);
+    var currentTpl = null;
+    function fillAmounts() {
+      if (!currentTpl || currentTpl.amountMode === 'manual') return;
+      var total = amt($('#edAmt', body).value);
+      if (isNaN(total)) return;
+      var net = currentTpl.amountMode === 'tax' ? Math.round(total / 1.05) : total;
+      var tax = currentTpl.amountMode === 'tax' ? total - net : 0;
+      $all('.line:not(.head)', linesEl).forEach(function (row) {
+        var part = row.getAttribute('data-part'), side = row.getAttribute('data-side');
+        if (!part) return;
+        var val = part === 'total' ? total : part === 'net' ? net : tax;
+        $('.l-dr', row).value = side === 'D' && val ? val : '';
+        $('.l-cr', row).value = side === 'C' && val ? val : '';
+      });
+      $('#edTplHint', body).textContent = currentTpl.amountMode === 'tax' && total ? '未稅 ' + fmt(net) + '，稅額 ' + fmt(tax) + '（5%）' : '';
+      totals();
+    }
+    if (tplSel) {
+      tplSel.onchange = function () {
+        currentTpl = tpls.filter(function (t) { return t.id === tplSel.value; })[0] || null;
+        $('#edAmtWrap', body).hidden = !currentTpl || currentTpl.amountMode === 'manual';
+        $('#edTplHint', body).textContent = currentTpl && currentTpl.amountMode === 'manual' ? '這個範本的金額請在下方各行自己填。' : '';
+        if (!currentTpl) return;
+        $('#edAmtLabel', body).textContent = currentTpl.amountMode === 'tax' ? '含稅金額' : '金額';
+        $('#edType', body).value = currentTpl.type;
+        $('#edMemo', body).value = currentTpl.memo;
+        $all('.line:not(.head)', linesEl).forEach(function (row) { row.remove(); });
+        currentTpl.lines.forEach(function (l) { addLine({ code: l.code, part: l.part, side: l.side }); });
+        fillAmounts();
+        var a = $('#edAmt', body);
+        if (!$('#edAmtWrap', body).hidden) a.focus();
+      };
+      $('#edAmt', body).addEventListener('input', fillAmounts);
+    }
+    $('#edCancel', body).onclick = closeModal;
+    $('#edSave', body).onclick = function () {
+      var lines = collect().filter(function (l) { return l.code || l.debit || l.credit; });
+      var payload = { no: editing ? v.no : '', date: $('#edDate', body).value, type: $('#edType', body).value, memo: $('#edMemo', body).value.trim(), lines: lines };
+      $('#edErr', body).textContent = '';
+      call('saveVoucher', payload).then(function (r) {
+        closeModal();
+        toast((editing ? '已修改 ' : '已新增 ') + r.no);
+        if (onSaved) onSaved();
+      }).catch(function (e) { $('#edErr', body).textContent = e.message; });
+    };
+  }
+
+  // ── 月底盤點 ──
+  RENDER.stocktake = function (el) {
+    var def = addMonths(today().slice(0, 7), -1);
+    el.innerHTML = '<div class="notice info">每月底盤點一次存貨，輸入盤點金額後，系統會自動產生調整傳票：<br>本月成本 ＝ 本月進貨 − 存貨增加數。平時進貨直接記入「食材及飲料進貨」「原料進料」「進貨」等成本科目即可。</div>' +
+      '<div class="toolbar"><label class="field">盤點月份<input type="month" id="stMonth" value="' + def + '"></label><button class="btn" type="button" id="stGo">載入</button></div><div id="stBody"></div>';
+    $('#stGo').onclick = load;
+    function load() {
+      return call('stocktakePreview', { period: $('#stMonth').value }).then(function (r) {
+        var b = $('#stBody');
+        if (!r.rows.length) {
+          b.innerHTML = '<div class="notice warn">目前沒有可盤點的存貨科目。請到「會計科目」加入存貨科目（例如 1166 食材及飲料存貨），並設定「盤點對應成本科目」。</div>';
+          return;
+        }
+        var html = '';
+        if (r.locked) html += '<div class="notice warn">' + esc(r.period) + ' 已鎖帳，只能查看。</div>';
+        var hasPrior = r.rows.some(function (x) { return x.counted !== ''; });
+        if (hasPrior) html += '<div class="notice info">本月已做過盤點' + (r.priorVouchers.length ? '（傳票 ' + esc(r.priorVouchers.join('、')) + '）' : '') + '。重新儲存會作廢舊傳票，依新數字重新產生。</div>';
+        html += '<div class="card"><div class="table-wrap"><table><thead><tr><th>存貨科目</th><th class="num">帳上金額（' + esc(r.endDate) + '）</th><th class="num">盤點金額</th><th class="num">差額</th><th>差額沖轉到</th></tr></thead><tbody>' +
+          r.rows.map(function (row) {
+            return '<tr data-code="' + esc(row.code) + '" data-book="' + row.book + '"><td><span class="code">' + esc(row.code) + '</span> ' + esc(row.name) + '</td><td class="num">' + fmt(row.book) + '</td>' +
+              '<td class="num"><input class="num st-in" inputmode="numeric" aria-label="' + esc(row.name) + ' 盤點金額" value="' + (row.counted === '' ? '' : row.counted) + '"' + (r.locked ? ' disabled' : '') + ' style="max-width:150px"></td>' +
+              '<td class="num st-diff"></td><td><span class="code">' + esc(row.costCode) + '</span> ' + esc(row.costName) + '</td></tr>';
+          }).join('') + '</tbody></table></div>' +
+          (r.locked || !can('stocktakeSave') ? '' : '<div class="modal-foot">' + (hasPrior ? '<button class="btn danger" type="button" id="stClear">取消本月盤點</button>' : '') + '<button class="btn primary" type="button" id="stSave">產生盤點調整傳票</button></div>') + '</div>';
+        b.innerHTML = html;
+        var upd = function () {
+          $all('tr[data-code]', b).forEach(function (tr) {
+            var v = $('.st-in', tr).value;
+            var d = v === '' ? '' : amt(v) - Number(tr.getAttribute('data-book'));
+            $('.st-diff', tr).innerHTML = d === '' ? '<span class="muted">未填</span>' : isNaN(d) ? '<span class="neg">格式錯誤</span>' : money(d);
+          });
+        };
+        $all('.st-in', b).forEach(function (i) { i.addEventListener('input', upd); });
+        upd();
+        var clr = $('#stClear', b);
+        if (clr) clr.onclick = function () {
+          ask('取消 ' + r.period + ' 盤點', '會作廢本月的盤點調整傳票並刪除盤點紀錄，成本回到本月進貨數。', { input: '取消原因', okText: '取消盤點', danger: true }).then(function (reason) {
+            if (!reason) return;
+            call('stocktakeClear', { period: r.period, reason: reason }).then(function () { toast('已取消 ' + r.period + ' 盤點'); load(); }).catch(function (e) { toast(e.message, true); });
+          });
+        };
+        var save = $('#stSave', b);
+        if (save) save.onclick = function () {
+          var counts = {};
+          $all('tr[data-code]', b).forEach(function (tr) { var v = $('.st-in', tr).value.trim(); if (v !== '') counts[tr.getAttribute('data-code')] = amt(v); });
+          if (!Object.keys(counts).length) { toast('請至少填一個盤點金額', true); return; }
+          ask('產生盤點調整傳票', r.period + ' 月底盤點：系統會依差額產生一張轉帳傳票，日期為 ' + r.endDate + '。').then(function (ok) {
+            if (!ok) return;
+            call('stocktakeSave', { period: r.period, counts: counts }).then(function (res) {
+              toast(res.voucherNo ? '已產生傳票 ' + res.voucherNo : '盤點數與帳上相同，不需調整');
+              load();
+            }).catch(function (e) { toast(e.message, true); });
+          });
+        };
+      }).catch(function (e) { $('#stBody').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    }
+    return load();
+  };
+
+  // ── 日記簿 ──
+  RENDER.journal = function (el) {
+    el.innerHTML = '<div id="jCtl"></div><div id="jOut"></div>';
+    var r0 = quickRange('thisMonth');
+    rangeControls($('#jCtl'), r0, function (p) {
+      call('journal', p).then(function (r) {
+        var dr = 0, cr = 0;
+        var rows = r.vouchers.map(function (v) {
+          dr += v.debit; cr += v.credit;
+          return v.lines.map(function (l, i) {
+            return '<tr><td>' + (i ? '' : esc(v.date)) + '</td><td class="code">' + (i ? '' : esc(v.no)) + '</td><td><span class="code">' + esc(l.code) + '</span> ' + esc(l.name) + '</td><td class="num">' + (l.debit ? fmt(l.debit) : '') + '</td><td class="num">' + (l.credit ? fmt(l.credit) : '') + '</td><td>' + esc(l.memo) + '</td><td>' + esc(l.party) + '</td></tr>';
+          }).join('');
+        }).join('');
+        $('#jOut').innerHTML = '<div class="card">' + reportTitle('日記簿', r.from + ' ～ ' + r.to) + '<div class="table-wrap"><table><thead><tr><th>日期</th><th>傳票號碼</th><th>科目</th><th class="num">借方</th><th class="num">貸方</th><th>摘要</th><th>往來對象</th></tr></thead><tbody>' +
+          (rows || '<tr><td colspan="7" class="muted">此期間沒有傳票</td></tr>') +
+          '<tr class="total"><td colspan="3">合計（' + r.vouchers.length + ' 張）</td><td class="num">' + fmt(dr) + '</td><td class="num">' + fmt(cr) + '</td><td colspan="2"></td></tr></tbody></table></div></div>';
+      }).catch(function (e) { $('#jOut').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    });
+  };
+
+  function reportTitle(name, range) {
+    return '<div class="report-title"><div class="co">' + esc(S.boot.settings.companyName || '') + '</div><div><b>' + esc(name) + '</b></div><div class="rng">' + esc(range) + '</div></div>';
+  }
+  function reportActions(main, getRange) {
+    var bar = setHeadActions(main, '<button class="btn" type="button" data-a="print">列印</button>' + (can('writeReports') ? '<button class="btn" type="button" data-a="sheet">寫入試算表</button>' : ''));
+    $('[data-a="print"]', bar).onclick = function () { window.print(); };
+    var w = $('[data-a="sheet"]', bar);
+    if (w) w.onclick = function () {
+      var r = getRange();
+      call('writeReports', r).then(function () { toast('已更新試算表中「報表_」三個分頁'); }).catch(function (e) { toast(e.message, true); });
+    };
+  }
+
+  // ── 分類帳 ──
+  RENDER.ledger = function (el) {
+    var def = S.acctMap['1113'] ? '1113' : (S.boot.accounts[0] || {}).code || '';
+    el.innerHTML = '<datalist id="lgList">' + acctOptions(function () { return true; }) + '</datalist>' +
+      '<div class="row" style="margin-bottom:10px"><label class="grow">科目<input list="lgList" id="lgAcct" value="' + esc(def ? acctLabel(def) : '') + '"></label>' +
+      '<label class="field">往來對象（選填）<input id="lgParty" placeholder="例如：大成食品"></label></div><div id="lgCtl"></div><div id="lgOut"></div>';
+    rangeControls($('#lgCtl'), quickRange('thisMonth'), function (p) {
+      p.code = parseAcct($('#lgAcct').value);
+      p.party = $('#lgParty').value.trim();
+      if (!p.code) { $('#lgOut').innerHTML = '<div class="notice warn">請先選擇科目</div>'; return; }
+      call('ledger', p).then(function (r) {
+        $('#lgOut').innerHTML = '<div class="card">' + reportTitle('分類帳：' + r.code + ' ' + r.name + (r.party ? '（' + r.party + '）' : ''), r.from + ' ～ ' + r.to) +
+          '<p class="muted small">餘額方向：' + (r.normal === '貸' ? '貸方' : '借方') + '科目' + (r.party ? '；篩選往來對象時，期初只計算該對象的分錄' : '') + '</p>' +
+          '<div class="table-wrap"><table><thead><tr><th>日期</th><th>傳票號碼</th><th>摘要</th><th>往來對象</th><th class="num">借方</th><th class="num">貸方</th><th class="num">餘額</th></tr></thead><tbody>' +
+          '<tr class="subtotal"><td colspan="6">期初餘額</td><td class="num">' + money(r.openingBalance) + '</td></tr>' +
+          r.rows.map(function (x) { return '<tr><td>' + esc(x.date) + '</td><td class="code">' + esc(x.no) + '</td><td>' + esc(x.memo) + '</td><td>' + esc(x.party) + '</td><td class="num">' + (x.debit ? fmt(x.debit) : '') + '</td><td class="num">' + (x.credit ? fmt(x.credit) : '') + '</td><td class="num">' + money(x.balance) + '</td></tr>'; }).join('') +
+          '<tr class="total"><td colspan="4">本期合計／期末餘額</td><td class="num">' + fmt(r.totalDebit) + '</td><td class="num">' + fmt(r.totalCredit) + '</td><td class="num">' + money(r.closingBalance) + '</td></tr></tbody></table></div></div>';
+      }).catch(function (e) { $('#lgOut').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    });
+  };
+
+  // ── 試算表 ──
+  RENDER.tb = function (el, main) {
+    var cur = quickRange('thisMonth');
+    reportActions(main, function () { return { from: cur.from, to: cur.to, asOf: cur.to }; });
+    el.innerHTML = '<div id="tbCtl"></div><div id="tbOut"></div>';
+    rangeControls($('#tbCtl'), cur, function (p) {
+      cur = p;
+      call('trialBalance', p).then(function (r) {
+        var t = r.totals;
+        $('#tbOut').innerHTML = (r.balanced ? '<div class="notice good no-print">借貸平衡</div>' : '<div class="notice bad">借貸不平衡：期末借餘 ' + fmt(t.closeDebit) + '，貸餘 ' + fmt(t.closeCredit) + '。多半是期初餘額未平衡。</div>') +
+          '<div class="card">' + reportTitle('試算表', r.from + ' ～ ' + r.to) + '<div class="table-wrap"><table><thead><tr><th>科目</th><th class="num">期初借餘</th><th class="num">期初貸餘</th><th class="num">本期借方</th><th class="num">本期貸方</th><th class="num">期末借餘</th><th class="num">期末貸餘</th></tr></thead><tbody>' +
+          r.rows.map(function (x) { return '<tr><td><span class="code">' + esc(x.code) + '</span> ' + esc(x.name) + '</td>' + [x.openDebit, x.openCredit, x.debit, x.credit, x.closeDebit, x.closeCredit].map(function (n) { return '<td class="num">' + (n ? fmt(n) : '') + '</td>'; }).join('') + '</tr>'; }).join('') +
+          '<tr class="total"><td>合計</td>' + [t.openDebit, t.openCredit, t.debit, t.credit, t.closeDebit, t.closeCredit].map(function (n) { return '<td class="num">' + fmt(n) + '</td>'; }).join('') + '</tr></tbody></table></div></div>';
+      }).catch(function (e) { $('#tbOut').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    });
+  };
+
+  // ── 損益表 ──
+  RENDER.is = function (el, main) {
+    var cur = quickRange('thisMonth');
+    reportActions(main, function () { return { from: cur.from, to: cur.to, asOf: cur.to }; });
+    el.innerHTML = '<div id="isCtl"></div><div id="isOut"></div>';
+    var extra = '<label class="field">比較<select id="isCmp"><option value="">不比較</option><option value="prev">與上一期</option><option value="lastyear">與去年同期</option></select></label>';
+    rangeControls($('#isCtl'), cur, function (p) {
+      cur = p;
+      p.compare = $('#isCmp') ? $('#isCmp').value : '';
+      call('incomeStatement', p).then(function (r) {
+        var c = r.current, k = r.compare;
+        var rev = c.summary.revenue, krev = k ? k.summary.revenue : 0;
+        var kmap = {};
+        if (k) k.sections.forEach(function (s) { kmap['T' + s.block] = s.total; s.rows.forEach(function (x) { kmap[x.code] = x.amount; }); });
+        var cols = function (a, b) {
+          var h = '<td class="num">' + money(a) + '</td><td class="num muted">' + pct(a, rev) + '</td>';
+          if (k) h += '<td class="num">' + money(b || 0) + '</td><td class="num muted">' + pct(b || 0, krev) + '</td><td class="num">' + money(a - (b || 0)) + '</td>';
+          return h;
+        };
+        var computed = { '營業成本': ['營業毛利', 'grossProfit'], '營業費用': ['營業淨利', 'operatingIncome'], '營業外支出': ['稅前淨利', 'pretaxIncome'], '所得稅費用': ['本期淨利', 'netIncome'] };
+        // 比較期有、本期沒有的科目也要列出
+        var rowsHtml = c.sections.map(function (s) {
+          var codes = {};
+          s.rows.forEach(function (x) { codes[x.code] = x; });
+          if (k) k.sections.filter(function (ks) { return ks.block === s.block; }).forEach(function (ks) { ks.rows.forEach(function (x) { if (!codes[x.code]) codes[x.code] = { code: x.code, name: x.name, amount: 0 }; }); });
+          var list = Object.keys(codes).sort().map(function (cd) { return codes[cd]; });
+          var cp = computed[s.block];
+          var cpRow = cp ? '<tr class="' + (cp[1] === 'netIncome' ? 'total' : 'subtotal') + '"><td>' + cp[0] + '</td>' + cols(c.summary[cp[1]], k ? k.summary[cp[1]] : 0) + '</tr>' : '';
+          if (!list.length && s.block !== '營業收入') return cpRow;
+          var h = '<tr class="section"><td colspan="' + (k ? 6 : 3) + '">' + esc(s.block) + '</td></tr>' +
+            list.map(function (x) { return '<tr><td class="indent"><span class="code">' + esc(x.code) + '</span> ' + esc(x.name) + '</td>' + cols(x.amount, kmap[x.code]) + '</tr>'; }).join('') +
+            '<tr class="subtotal"><td>' + esc(s.block) + '合計</td>' + cols(s.total, kmap['T' + s.block]) + '</tr>';
+          return h + cpRow;
+        }).join('');
+        $('#isOut').innerHTML = '<div class="card">' + reportTitle('損益表', c.from + ' ～ ' + c.to + (k ? '（比較：' + k.from + ' ～ ' + k.to + '）' : '')) +
+          '<div class="table-wrap"><table><thead><tr><th>項目</th><th class="num">本期</th><th class="num">占營收</th>' + (k ? '<th class="num">比較期</th><th class="num">占營收</th><th class="num">增減</th>' : '') + '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div></div>';
+      }).catch(function (e) { $('#isOut').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    }, { extra: extra });
+  };
+
+  // ── 資產負債表 ──
+  RENDER.bs = function (el, main) {
+    var asOf = today();
+    reportActions(main, function () { var r = quickRange('thisMonth'); return { from: r.from, to: asOf, asOf: asOf }; });
+    el.innerHTML = '<div id="bsCtl"></div><div id="bsOut"></div>';
+    rangeControls($('#bsCtl'), { asOf: asOf }, function (p) {
+      asOf = p.asOf;
+      call('balanceSheet', p).then(function (r) {
+        var sec = {};
+        r.sections.forEach(function (s) { sec[s.block] = s; });
+        var block = function (name) {
+          var s = sec[name];
+          return '<tr class="section"><td colspan="2">' + esc(name) + '</td></tr>' +
+            s.rows.map(function (x) { return '<tr><td class="indent">' + (x.code ? '<span class="code">' + esc(x.code) + '</span> ' : '') + esc(x.name) + (x.computed ? ' <span class="badge auto">系統計算</span>' : '') + '</td><td class="num">' + money(x.amount) + '</td></tr>'; }).join('') +
+            '<tr class="subtotal"><td>' + esc(name) + '合計</td><td class="num">' + money(s.total) + '</td></tr>';
+        };
+        var sm = r.summary;
+        $('#bsOut').innerHTML = (sm.difference ? '<div class="notice bad">資產與負債＋權益相差 ' + fmt(sm.difference) + '，請檢查期初餘額是否平衡。</div>' : '') +
+          '<div class="card">' + reportTitle('資產負債表', '截至 ' + r.asOf) + '<div class="table-wrap"><table><thead><tr><th>項目</th><th class="num">金額</th></tr></thead><tbody>' +
+          block('流動資產') + block('非流動資產') + '<tr class="total"><td>資產總計</td><td class="num">' + money(sm.assets) + '</td></tr>' +
+          block('流動負債') + block('非流動負債') + '<tr class="subtotal"><td>負債總計</td><td class="num">' + money(sm.liabilities) + '</td></tr>' +
+          block('權益') + '<tr class="total"><td>負債及權益總計</td><td class="num">' + money(sm.liabilitiesAndEquity) + '</td></tr></tbody></table></div>' +
+          '<p class="muted small">本期損益＝本會計年度（' + esc(r.fiscalYearStart) + ' 起）至截止日的淨利；年度結帳功能將在第三期加入。</p></div>';
+      }).catch(function (e) { $('#bsOut').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    }, { asOf: true });
+  };
+
+  // ── 期間鎖帳 ──
+  RENDER.periods = function (el) {
+    function load() {
+      return call('listPeriods').then(function (list) {
+        el.innerHTML = '<div class="notice info">月底結帳後把該月「鎖帳」，鎖帳後該月傳票不能新增、修改或作廢。鎖帳前系統會檢查試算表借貸平衡。只有管理者可以解鎖，且需填寫原因。</div>' +
+          '<div class="card"><div class="table-wrap"><table><thead><tr><th>期間</th><th class="num">傳票數</th><th>狀態</th><th>鎖定人／時間</th><th></th></tr></thead><tbody>' +
+          list.map(function (p) {
+            var locked = p.status === '已鎖定';
+            return '<tr><td>' + esc(p.period) + '</td><td class="num">' + p.vouchers + '</td><td><span class="badge ' + (locked ? 'lock' : 'open') + '">' + (locked ? '已鎖帳' : '開放') + '</span></td>' +
+              '<td class="small muted">' + esc(p.lockedBy) + ' ' + esc(p.lockedAt) + '</td><td class="actions">' +
+              (!locked && can('lockPeriod') ? '<button class="btn small" type="button" data-lock="' + p.period + '">鎖帳</button>' : '') +
+              (locked && can('unlockPeriod') ? '<button class="btn small danger" type="button" data-unlock="' + p.period + '">解鎖</button>' : '') + '</td></tr>';
+          }).join('') + '</tbody></table></div></div>';
+        $all('[data-lock]', el).forEach(function (b) {
+          b.onclick = function () {
+            var p = b.getAttribute('data-lock');
+            ask('鎖帳 ' + p, '鎖帳後 ' + p + ' 的傳票不能再新增、修改或作廢。建議先完成月底盤點再鎖帳。', { okText: '鎖帳' }).then(function (ok) {
+              if (!ok) return;
+              call('lockPeriod', { period: p }).then(function () { toast(p + ' 已鎖帳'); return refreshBoot().then(load); }).catch(function (e) { toast(e.message, true); });
+            });
+          };
+        });
+        $all('[data-unlock]', el).forEach(function (b) {
+          b.onclick = function () {
+            var p = b.getAttribute('data-unlock');
+            ask('解鎖 ' + p, '解鎖後可以修改該月傳票，請填寫原因（會記入操作紀錄）。', { input: '解鎖原因', okText: '解鎖', danger: true }).then(function (reason) {
+              if (!reason) return;
+              call('unlockPeriod', { period: p, reason: reason }).then(function () { toast(p + ' 已解鎖'); return refreshBoot().then(load); }).catch(function (e) { toast(e.message, true); });
+            });
+          };
+        });
+      });
+    }
+    return load();
+  };
+
+  // ── 期初餘額 ──
+  RENDER.opening = function (el) {
+    return call('getOpening').then(function (r) {
+      if (!r.openingDate) {
+        el.innerHTML = '<div class="notice warn">請先到「公司設定」填寫開帳日，再輸入期初餘額。</div>';
+        return;
+      }
+      if (!r.rows.length) {
+        el.innerHTML = '<div class="notice warn">尚未建立資產、負債、權益科目。請先到「會計科目」依產業帶入科目。</div>';
+        return;
+      }
+      var editable = can('saveOpening') && !r.locked;
+      var groups = {};
+      r.rows.forEach(function (x) { if (x.enabled || x.debit || x.credit) (groups[x.block] = groups[x.block] || []).push(x); });
+      var html = '<div class="notice info">輸入開帳日 <b>' + esc(r.openingDate) + '</b> 當天各科目的餘額（通常取自上年度資產負債表）。借方合計必須等於貸方合計。累計折舊等抵銷科目填在貸方。</div>' +
+        (r.locked ? '<div class="notice warn">開帳日所在月份已鎖帳，只能查看。</div>' : '') +
+        '<div class="card"><div class="table-wrap"><table><thead><tr><th>科目</th><th class="num">借方</th><th class="num">貸方</th></tr></thead><tbody>';
+      ['流動資產', '非流動資產', '流動負債', '非流動負債', '權益'].forEach(function (b) {
+        if (!groups[b]) return;
+        html += '<tr class="section"><td colspan="3">' + b + '</td></tr>' + groups[b].map(function (x) {
+          return '<tr data-code="' + esc(x.code) + '"><td class="indent"><span class="code">' + esc(x.code) + '</span> ' + esc(x.name) + (x.normal === '貸' && /資產/.test(b) ? ' <span class="muted small">（抵銷）</span>' : '') + '</td>' +
+            '<td class="num"><input class="num op-dr" inputmode="numeric" aria-label="' + esc(x.name) + ' 借方" value="' + (x.debit || '') + '"' + (editable ? '' : ' disabled') + ' style="max-width:150px"></td>' +
+            '<td class="num"><input class="num op-cr" inputmode="numeric" aria-label="' + esc(x.name) + ' 貸方" value="' + (x.credit || '') + '"' + (editable ? '' : ' disabled') + ' style="max-width:150px"></td></tr>';
+        }).join('');
+      });
+      html += '<tr class="total"><td>合計</td><td class="num" id="opDr"></td><td class="num" id="opCr"></td></tr></tbody></table></div>' +
+        '<p id="opDiff"></p>' + (editable ? '<div class="modal-foot"><button class="btn primary" type="button" id="opSave">儲存期初餘額</button></div>' : '') + '</div>';
+      el.innerHTML = html;
+      var upd = function () {
+        var dr = 0, cr = 0;
+        $all('.op-dr', el).forEach(function (i) { dr += amt(i.value) || 0; });
+        $all('.op-cr', el).forEach(function (i) { cr += amt(i.value) || 0; });
+        $('#opDr').textContent = fmt(dr);
+        $('#opCr').textContent = fmt(cr);
+        var d = $('#opDiff');
+        d.className = dr === cr ? 'diff-ok' : 'diff-bad';
+        d.textContent = dr === cr ? (dr ? '借貸平衡' : '') : '借貸差額 ' + fmt(dr - cr) + '（可以先儲存，平衡後才能鎖帳）';
+      };
+      $all('.op-dr, .op-cr', el).forEach(function (i) { i.addEventListener('input', upd); });
+      upd();
+      var save = $('#opSave');
+      if (save) save.onclick = function () {
+        var rows = $all('tr[data-code]', el).map(function (tr) { return { code: tr.getAttribute('data-code'), debit: amt($('.op-dr', tr).value), credit: amt($('.op-cr', tr).value) }; });
+        call('saveOpening', { rows: rows }).then(function (res) {
+          toast(res.balanced ? '已儲存，借貸平衡' : '已儲存，但借貸尚未平衡（差 ' + fmt(res.debit - res.credit) + '）', !res.balanced);
+        }).catch(function (e) { toast(e.message, true); });
+      };
+    });
+  };
+
+  // ── 會計科目 ──
+  RENDER.accounts = function (el) {
+    var manage = can('saveAccount');
+    var tab = 'mine';
+    el.innerHTML = '<div class="chips" style="margin-bottom:14px" role="tablist">' +
+      '<button class="chip on" type="button" data-tab="mine" role="tab">本公司科目</button>' +
+      '<button class="chip" type="button" data-tab="ref" role="tab">科目參考庫</button>' +
+      (manage ? '<button class="chip" type="button" data-tab="new" role="tab">＋ 新增自訂科目</button>' : '') + '</div><div id="acOut"></div>';
+    $all('[data-tab]', el).forEach(function (b) {
+      b.onclick = function () {
+        tab = b.getAttribute('data-tab');
+        $all('[data-tab]', el).forEach(function (x) { x.classList.toggle('on', x === b); });
+        show();
+      };
+    });
+    function show() {
+      if (tab === 'mine') return mine();
+      if (tab === 'ref') return ref();
+      accountForm($('#acOut'), null, function () { refreshBoot().then(function () { tab = 'mine'; $all('[data-tab]', el).forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-tab') === 'mine'); }); show(); }); });
+    }
+    function blockOptions(sel) {
+      return '<option value="">全部區塊</option>' + S.boot.blocks.map(function (b) { return '<option' + (sel === b.name ? ' selected' : '') + '>' + b.name + '</option>'; }).join('');
+    }
+    function mine() {
+      var out = $('#acOut');
+      if (!S.boot.accounts.length) {
+        out.innerHTML = '<div class="notice warn">還沒有任何科目。' + (manage ? '請到「科目參考庫」依公司產業一次帶入建議科目。' : '請管理者先建立科目。') + '</div>';
+        return;
+      }
+      out.innerHTML = '<div class="toolbar"><label class="field">區塊<select id="mBlock">' + blockOptions('') + '</select></label><label class="grow">搜尋<input id="mKw" placeholder="代碼或名稱"></label><label class="check"><input type="checkbox" id="mOff"> 顯示停用</label></div><div class="card"><div class="table-wrap" id="mTable"></div></div>';
+      var draw = function () {
+        var b = $('#mBlock').value, kw = $('#mKw').value.trim(), off = $('#mOff').checked;
+        var list = S.boot.accounts.filter(function (a) { return (!b || a.block === b) && (off || a.enabled) && (!kw || (a.code + a.name).indexOf(kw) >= 0); })
+          .sort(function (x, y) { return x.code < y.code ? -1 : 1; });
+        $('#mTable').innerHTML = '<table><thead><tr><th>代碼</th><th>名稱</th><th>報表區塊</th><th>餘額</th><th>盤點沖轉</th><th>來源</th><th>狀態</th>' + (manage ? '<th></th>' : '') + '</tr></thead><tbody>' +
+          list.map(function (a) {
+            return '<tr><td class="code">' + esc(a.code) + '</td><td>' + esc(a.name) + (a.note ? '<div class="muted small">' + esc(a.note) + '</div>' : '') + '</td><td>' + esc(a.block) + '</td><td>' + esc(a.normal) + '</td><td class="code">' + esc(a.stockCost) + '</td><td class="small">' + esc(a.source) + '</td>' +
+              '<td>' + (a.enabled ? '<span class="badge open">啟用</span>' : '<span class="badge lock">停用</span>') + '</td>' +
+              (manage ? '<td class="actions"><button class="btn small" type="button" data-edit="' + esc(a.code) + '">編輯</button> <button class="btn small" type="button" data-tog="' + esc(a.code) + '">' + (a.enabled ? '停用' : '啟用') + '</button></td>' : '') + '</tr>';
+          }).join('') + '</tbody></table>' + (list.length ? '' : '<p class="muted">沒有符合的科目</p>');
+        $all('[data-edit]', out).forEach(function (btn) {
+          btn.onclick = function () {
+            var a = S.acctMap[btn.getAttribute('data-edit')];
+            var body = openModal('編輯科目 ' + a.code, '<div id="edAcct"></div>', { narrow: false });
+            accountForm($('#edAcct', body), a, function () { closeModal(); refreshBoot().then(mine); });
+          };
+        });
+        $all('[data-tog]', out).forEach(function (btn) {
+          btn.onclick = function () {
+            var a = S.acctMap[btn.getAttribute('data-tog')];
+            call('toggleAccount', { code: a.code, enabled: !a.enabled }).then(function () { toast((a.enabled ? '已停用 ' : '已啟用 ') + a.code + ' ' + a.name); return refreshBoot().then(draw); }).catch(function (e) { toast(e.message, true); });
+          };
+        });
+      };
+      $('#mBlock').onchange = draw; $('#mKw').oninput = draw; $('#mOff').onchange = draw;
+      draw();
+    }
+    function ref() {
+      var out = $('#acOut');
+      return call('listReference').then(function (list) {
+        var inds = S.boot.industries;
+        var picked = {};
+        var chosen = (S.boot.settings.industries || []).slice();
+        out.innerHTML = '<div class="notice info">參考庫是公版提供的建議科目，依產業分類。勾選需要的科目加入本公司科目表；加入後可再編輯名稱或停用。正式使用前建議請記帳士或會計師確認。</div>' +
+          '<div class="toolbar"><div><div class="muted small" style="margin-bottom:4px">產業</div><div class="chips" id="rInd">' + inds.map(function (i) { return '<button type="button" class="chip' + (chosen.indexOf(i) >= 0 ? ' on' : '') + '" data-ind="' + i + '">' + i + '</button>'; }).join('') + '</div></div>' +
+          '<label class="field">區塊<select id="rBlock">' + blockOptions('') + '</select></label><label class="grow">搜尋<input id="rKw" placeholder="代碼、名稱或說明"></label>' +
+          '<label class="check"><input type="checkbox" id="rNew" checked> 只看尚未加入</label></div>' +
+          (manage ? '<div class="row" style="margin-bottom:12px"><button class="btn primary" type="button" id="rAdd" disabled>加入勾選的科目</button><button class="btn" type="button" id="rAll">依公司產業一次加入建議科目</button></div>' : '') +
+          '<div class="card"><div class="table-wrap" id="rTable"></div></div>';
+        var draw = function () {
+          var on = $all('#rInd .chip.on').map(function (c) { return c.getAttribute('data-ind'); });
+          var b = $('#rBlock').value, kw = $('#rKw').value.trim(), onlyNew = $('#rNew').checked;
+          var rows = list.filter(function (r) {
+            var ri = r.industries.split(',');
+            return (!on.length || ri.some(function (i) { return on.indexOf(i) >= 0; })) && (!b || r.block === b) && (!onlyNew || !r.inCompany) &&
+              (!kw || (r.code + r.name + r.note).indexOf(kw) >= 0);
+          });
+          $('#rTable').innerHTML = '<table><thead><tr>' + (manage ? '<th><span class="muted small">勾選</span></th>' : '') + '<th>代碼</th><th>名稱</th><th>報表區塊</th><th>適用產業</th><th>說明</th><th></th></tr></thead><tbody>' +
+            rows.map(function (r) {
+              return '<tr>' + (manage ? '<td>' + (r.inCompany ? '' : '<input type="checkbox" class="r-pick" aria-label="勾選 ' + esc(r.name) + '" value="' + esc(r.code) + '"' + (picked[r.code] ? ' checked' : '') + '>') + '</td>' : '') +
+                '<td class="code">' + esc(r.code) + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.block) + '</td><td class="small">' + esc(r.industries) + '</td><td class="small muted">' + esc(r.note) + (r.stockCost ? '（盤點沖轉 ' + esc(r.stockCost) + '）' : '') + '</td>' +
+                '<td>' + (r.inCompany ? '<span class="badge open">已加入</span>' : '') + '</td></tr>';
+            }).join('') + '</tbody></table>' + (rows.length ? '' : '<p class="muted">沒有符合的科目</p>');
+          $all('.r-pick', out).forEach(function (c) { c.onchange = function () { if (c.checked) picked[c.value] = true; else delete picked[c.value]; upd(); }; });
+        };
+        var upd = function () {
+          var n = Object.keys(picked).length;
+          var btn = $('#rAdd');
+          if (btn) { btn.disabled = !n; btn.textContent = n ? '加入勾選的 ' + n + ' 個科目' : '加入勾選的科目'; }
+        };
+        $all('#rInd .chip').forEach(function (c) { c.onclick = function () { c.classList.toggle('on'); draw(); }; });
+        $('#rBlock').onchange = draw; $('#rKw').oninput = draw; $('#rNew').onchange = draw;
+        draw();
+        if (manage) {
+          $('#rAdd').onclick = function () {
+            call('addFromReference', { codes: Object.keys(picked) }).then(function (r) { toast('已加入 ' + r.added + ' 個科目（含盤點需要的成本科目）'); return refreshBoot().then(ref); }).catch(function (e) { toast(e.message, true); });
+          };
+          $('#rAll').onclick = function () {
+            var ind = S.boot.settings.industries || [];
+            ask('依公司產業加入科目', '會加入「通用」及「' + ind.join('、') + '」的所有建議科目（已加入的不重複）。產業類別可在「公司設定」修改。').then(function (ok) {
+              if (!ok) return;
+              call('addByIndustry', { industries: ind }).then(function (r) { toast('已加入 ' + r.added + ' 個科目'); return refreshBoot().then(ref); }).catch(function (e) { toast(e.message, true); });
+            });
+          };
+        }
+      });
+    }
+    show();
+  };
+
+  function accountForm(el, a, onDone) {
+    var isNew = !a;
+    a = a || { code: '', name: '', block: '營業費用', normal: '', industries: '', stockCost: '', note: '', enabled: true };
+    var costOpts = '<option value="">（不盤點）</option>' + S.boot.accounts.filter(function (x) { return x.block === '營業成本' || x.block === '營業費用'; })
+      .sort(function (x, y) { return x.code < y.code ? -1 : 1; })
+      .map(function (x) { return '<option value="' + esc(x.code) + '"' + (a.stockCost === x.code ? ' selected' : '') + '>' + esc(x.code + ' ' + x.name) + '</option>'; }).join('');
+    var blockDefault = function (name) { var b = S.boot.blocks.filter(function (x) { return x.name === name; })[0]; return b ? b.normal : ''; };
+    el.innerHTML = '<div class="card"><div class="row">' +
+      '<label class="field">科目代碼<input id="afCode" value="' + esc(a.code) + '"' + (isNew ? '' : ' disabled') + ' inputmode="numeric" placeholder="例如 6345"></label>' +
+      '<label class="grow">科目名稱<input id="afName" value="' + esc(a.name) + '"></label></div>' +
+      '<div class="row" style="margin-top:10px"><label class="field">報表區塊<select id="afBlock">' + S.boot.blocks.map(function (b) { return '<option' + (a.block === b.name ? ' selected' : '') + '>' + b.name + '</option>'; }).join('') + '</select></label>' +
+      '<label class="field">正常餘額<select id="afNormal"><option value="">依區塊預設</option><option' + (a.normal === '借' ? ' selected' : '') + '>借</option><option' + (a.normal === '貸' ? ' selected' : '') + '>貸</option></select></label>' +
+      '<label class="field">盤點對應成本科目<select id="afStock">' + costOpts + '</select></label></div>' +
+      '<div class="row" style="margin-top:10px"><label class="grow">說明<input id="afNote" value="' + esc(a.note) + '" placeholder="什麼情況用這個科目"></label></div>' +
+      '<p class="muted small">代碼首碼規則：1 資產、2 負債、3 權益、4 營業收入、5 營業成本、6 營業費用、7 營業外收支、8 所得稅。抵銷科目（例如累計折舊）的正常餘額請選相反方向。只有存貨科目需要設定「盤點對應成本科目」。</p>' +
+      '<p class="error-text" id="afErr" role="alert"></p><div class="modal-foot"><button class="btn primary" type="button" id="afSave">' + (isNew ? '新增科目' : '儲存') + '</button></div></div>';
+    $('#afSave', el).onclick = function () {
+      var block = $('#afBlock', el).value;
+      var normal = $('#afNormal', el).value || blockDefault(block);
+      var acc = { code: $('#afCode', el).value.trim(), name: $('#afName', el).value.trim(), block: block, normal: normal, industries: a.industries, stockCost: $('#afStock', el).value, note: $('#afNote', el).value.trim(), enabled: a.enabled };
+      $('#afErr', el).textContent = '';
+      call('saveAccount', { account: acc, isNew: isNew }).then(function () { toast((isNew ? '已新增 ' : '已儲存 ') + acc.code + ' ' + acc.name); onDone(); }).catch(function (e) { $('#afErr', el).textContent = e.message; });
+    };
+  }
+
+  // ── 公司設定 ──
+  RENDER.settings = function (el) {
+    return call('getSettings').then(function (s) {
+      var edit = can('saveSettings');
+      var dis = edit ? '' : ' disabled';
+      el.innerHTML = '<div class="card">' +
+        '<div class="row"><label class="grow">公司名稱<input id="sName" value="' + esc(s.companyName) + '"' + dis + '></label><label class="field">統一編號<input id="sTax" value="' + esc(s.taxId) + '" inputmode="numeric" maxlength="8"' + dis + '></label></div>' +
+        '<div style="margin-top:14px"><div class="muted small">產業類別（可複選，影響建議科目）</div><div style="margin-top:6px">' +
+        S.boot.industries.map(function (i) { return '<label class="check"><input type="checkbox" class="s-ind" value="' + i + '"' + (s.industries.indexOf(i) >= 0 ? ' checked' : '') + dis + '> ' + i + '</label>'; }).join('') + '</div></div>' +
+        '<div class="row" style="margin-top:14px"><label class="field">營業稅類型<select id="sVat"' + dis + '><option' + (s.vatType === '一般稅額' ? ' selected' : '') + '>一般稅額</option><option' + (s.vatType === '小規模' ? ' selected' : '') + '>小規模</option></select></label>' +
+        '<label class="field">會計年度起始月<select id="sFy"' + dis + '>' + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (m) { return '<option value="' + m + '"' + (s.fyStartMonth === m ? ' selected' : '') + '>' + m + ' 月</option>'; }).join('') + '</select></label>' +
+        '<label class="field">開帳日<input type="date" id="sOpen" value="' + esc(s.openingDate) + '"' + dis + '></label></div>' +
+        '<div class="notice info" style="margin-top:14px">營業稅類型怎麼判斷：公司有開統一發票（含電子發票）、每兩個月申報 401 → 一般稅額；不開發票、國稅局每季寄稅單 → 小規模。不確定請問記帳士。<br>開帳日：開始用本系統記帳的第一天，期初餘額以這天為準；之後的傳票日期不能早於開帳日。</div>' +
+        (edit ? '<p class="error-text" id="sErr" role="alert"></p><div class="modal-foot"><button class="btn primary" type="button" id="sSave">儲存設定</button></div>' : '<p class="muted">只有管理者可以修改公司設定。</p>') + '</div>';
+      if (!edit) return;
+      $('#sSave').onclick = function () {
+        var p = {
+          companyName: $('#sName').value.trim(), taxId: $('#sTax').value.trim(),
+          industries: $all('.s-ind:checked').map(function (c) { return c.value; }),
+          vatType: $('#sVat').value, fyStartMonth: Number($('#sFy').value), openingDate: $('#sOpen').value
+        };
+        $('#sErr').textContent = '';
+        call('saveSettings', p).then(function () { toast('已儲存公司設定'); return refreshBoot(); }).catch(function (e) { $('#sErr').textContent = e.message; });
+      };
+    });
+  };
+
+  // ── 帳號與權限（集團管理者） ──
+  RENDER.users = function (el, main) {
+    var bar = setHeadActions(main, '<button class="btn primary" type="button" id="uNew">＋ 新增帳號</button>');
+    var data = null;
+    $('#uNew', bar).onclick = function () { userForm(null); };
+    function accessText(u) {
+      if (u.groupRole === '管理者') return '<span class="badge open">集團管理者（所有公司）</span>';
+      if (!u.access.length) return '<span class="muted">未指派公司</span>';
+      return u.access.map(function (a) { return esc(a.companyName) + '：' + esc(a.role); }).join('<br>');
+    }
+    function load() {
+      return call('listUsers').then(function (d) {
+        data = d;
+        el.innerHTML = '<div class="notice info">集團管理者可以進入所有公司並管理公司與帳號。一般成員要逐家公司指派角色：管理者＝該公司全部功能；會計＝記帳、報表、盤點、鎖帳；助理＝只能查看傳票與日記簿。</div>' +
+          '<div class="card"><div class="table-wrap"><table><thead><tr><th>帳號</th><th>姓名</th><th>公司權限</th><th>狀態</th><th>最後登入</th><th></th></tr></thead><tbody>' +
+          d.users.map(function (u) {
+            return '<tr><td class="code">' + esc(u.username) + '</td><td>' + esc(u.name) + '</td><td class="small">' + accessText(u) + '</td><td>' + (u.enabled ? '<span class="badge open">啟用</span>' : '<span class="badge lock">停用</span>') + '</td><td class="small muted">' + esc(u.lastLogin) + '</td>' +
+              '<td class="actions"><button class="btn small" type="button" data-edit="' + esc(u.username) + '">編輯</button> <button class="btn small" type="button" data-reset="' + esc(u.username) + '">重設密碼</button></td></tr>';
+          }).join('') + '</tbody></table></div></div>';
+        $all('[data-edit]', el).forEach(function (b) { b.onclick = function () { userForm(d.users.filter(function (u) { return u.username === b.getAttribute('data-edit'); })[0]); }; });
+        $all('[data-reset]', el).forEach(function (b) {
+          b.onclick = function () {
+            var u = b.getAttribute('data-reset');
+            ask('重設密碼', '確定要重設 ' + u + ' 的密碼？系統會產生新的臨時密碼，對方原本的登入會全部失效。', { okText: '重設' }).then(function (ok) {
+              if (!ok) return;
+              call('resetPassword', { username: u }).then(function (r) { showTempPassword(r.username, r.tempPassword); }).catch(function (e) { toast(e.message, true); });
+            });
+          };
+        });
+      });
+    }
+    function userForm(u) {
+      var isNew = !u;
+      u = u || { username: '', name: '', groupRole: '成員', enabled: true, access: [] };
+      var roleOf = {};
+      u.access.forEach(function (a) { roleOf[a.companyId] = a.role; });
+      var body = openModal(isNew ? '新增帳號' : '編輯帳號 ' + u.username,
+        '<label>帳號（英數字）<input id="ufUser" value="' + esc(u.username) + '"' + (isNew ? '' : ' disabled') + ' autocomplete="off"></label>' +
+        '<label style="margin-top:10px">姓名<input id="ufName" value="' + esc(u.name) + '"></label>' +
+        '<label style="margin-top:10px">身分<select id="ufGroup"><option value="成員"' + (u.groupRole === '成員' ? ' selected' : '') + '>一般成員（逐家公司指派）</option><option value="管理者"' + (u.groupRole === '管理者' ? ' selected' : '') + '>集團管理者（所有公司）</option></select></label>' +
+        '<div id="ufAccess" style="margin-top:12px"><div class="muted small">各公司角色</div><div class="access-grid">' +
+        data.companies.map(function (c) {
+          return '<span>' + esc(c.name) + '</span><select data-co="' + esc(c.id) + '" aria-label="' + esc(c.name) + ' 角色"><option value="">無權限</option>' +
+            S.boot.roles.map(function (r) { return '<option' + (roleOf[c.id] === r ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select>';
+        }).join('') + '</div></div>' +
+        (isNew ? '' : '<label class="check" style="margin-top:12px"><input type="checkbox" id="ufOn"' + (u.enabled ? ' checked' : '') + '> 啟用</label>') +
+        '<p class="error-text" id="ufErr" role="alert"></p><div class="modal-foot"><button class="btn" type="button" id="ufCancel">取消</button><button class="btn primary" type="button" id="ufSave">儲存</button></div>', { narrow: true });
+      var sync = function () { $('#ufAccess', body).hidden = $('#ufGroup', body).value === '管理者'; };
+      $('#ufGroup', body).onchange = sync;
+      sync();
+      $('#ufCancel', body).onclick = closeModal;
+      $('#ufSave', body).onclick = function () {
+        var access = $all('[data-co]', body).filter(function (x) { return x.value; }).map(function (x) { return { companyId: x.getAttribute('data-co'), role: x.value }; });
+        var p = { isNew: isNew, username: $('#ufUser', body).value.trim(), name: $('#ufName', body).value.trim(), groupRole: $('#ufGroup', body).value, access: access, enabled: isNew ? true : $('#ufOn', body).checked };
+        call('saveUser', p).then(function (r) {
+          closeModal();
+          if (r.tempPassword) showTempPassword(r.username, r.tempPassword); else toast('已儲存 ' + r.username);
+          load();
+        }).catch(function (e) { $('#ufErr', body).textContent = e.message; });
+      };
+    }
+    return load();
+  };
+
+  // ── 公司管理（集團管理者） ──
+  RENDER.companies = function (el, main) {
+    var bar = setHeadActions(main, '<button class="btn primary" type="button" id="cNew">＋ 新增公司</button>');
+    $('#cNew', bar).onclick = function () { companyForm(); };
+    function load() {
+      return call('listCompanies').then(function (list) {
+        el.innerHTML = '<div class="notice info">每家公司各自一份試算表，帳務完全分開；登入帳號與權限統一在這裡管理。新增公司時系統會自動建立試算表，並依產業帶入建議科目。</div>' +
+          '<div class="card"><div class="table-wrap"><table><thead><tr><th>代碼</th><th>公司名稱</th><th>試算表</th><th>狀態</th><th></th></tr></thead><tbody>' +
+          list.map(function (c) {
+            return '<tr><td class="code">' + esc(c.id) + '</td><td>' + esc(c.name) + (c.isHub ? ' <span class="badge auto">集團主檔</span>' : '') + '</td>' +
+              '<td><a href="' + esc(c.url) + '" target="_blank" rel="noopener">開啟</a></td>' +
+              '<td>' + (c.enabled ? '<span class="badge open">啟用</span>' : '<span class="badge lock">停用</span>') + '</td>' +
+              '<td class="actions"><button class="btn small" type="button" data-ren="' + esc(c.id) + '">改名</button> <button class="btn small" type="button" data-tog="' + esc(c.id) + '">' + (c.enabled ? '停用' : '啟用') + '</button></td></tr>';
+          }).join('') + '</tbody></table></div></div>';
+        $all('[data-ren]', el).forEach(function (b) {
+          b.onclick = function () {
+            var c = list.filter(function (x) { return x.id === b.getAttribute('data-ren'); })[0];
+            ask('公司改名', '目前名稱：' + c.name, { input: '新的公司名稱', okText: '儲存' }).then(function (name) {
+              if (!name) return;
+              call('saveCompany', { id: c.id, name: name, enabled: c.enabled }).then(function () { toast('已改名'); return refreshBoot().then(load); }).catch(function (e) { toast(e.message, true); });
+            });
+          };
+        });
+        $all('[data-tog]', el).forEach(function (b) {
+          b.onclick = function () {
+            var c = list.filter(function (x) { return x.id === b.getAttribute('data-tog'); })[0];
+            var msg = c.enabled ? '停用後所有人都不能切換進這家公司，資料仍保留在試算表。' : '重新啟用這家公司。';
+            ask((c.enabled ? '停用 ' : '啟用 ') + c.name, msg, { okText: c.enabled ? '停用' : '啟用', danger: c.enabled }).then(function (ok) {
+              if (!ok) return;
+              call('saveCompany', { id: c.id, name: c.name, enabled: !c.enabled }).then(function () { return refreshBoot().then(function () { buildNav(); load(); }); }).catch(function (e) { toast(e.message, true); });
+            });
+          };
+        });
+      });
+    }
+    function companyForm() {
+      var body = openModal('新增公司',
+        '<label>公司名稱<input id="cfName" placeholder="例如：公版食品有限公司"></label>' +
+        '<label style="margin-top:10px">統一編號（選填）<input id="cfTax" inputmode="numeric" maxlength="8"></label>' +
+        '<div style="margin-top:12px"><div class="muted small">產業類別（決定建議科目與傳票範本，可複選）</div><div style="margin-top:6px">' +
+        S.boot.industries.filter(function (i) { return i !== '通用'; }).map(function (i) { return '<label class="check"><input type="checkbox" class="cf-ind" value="' + i + '"> ' + i + '</label>'; }).join('') + '</div></div>' +
+        '<label style="margin-top:10px">營業稅類型<select id="cfVat"><option>一般稅額</option><option>小規模</option></select></label>' +
+        '<p class="muted small">建立後請切換到這家公司，到「公司設定」填開帳日，再輸入期初餘額。</p>' +
+        '<p class="error-text" id="cfErr" role="alert"></p><div class="modal-foot"><button class="btn" type="button" id="cfCancel">取消</button><button class="btn primary" type="button" id="cfSave">建立公司</button></div>', { narrow: true });
+      $('#cfCancel', body).onclick = closeModal;
+      $('#cfSave', body).onclick = function () {
+        var p = { name: $('#cfName', body).value.trim(), taxId: $('#cfTax', body).value.trim(), vatType: $('#cfVat', body).value, industries: $all('.cf-ind:checked', body).map(function (c) { return c.value; }) };
+        $('#cfErr', body).textContent = '';
+        call('createCompany', p).then(function (r) {
+          closeModal();
+          toast('已建立 ' + r.name + '，可在右上角切換');
+          return refreshBoot().then(function () { buildNav(); load(); });
+        }).catch(function (e) { $('#cfErr', body).textContent = e.message; });
+      };
+    }
+    return load();
+  };
+
+  // ── 集團報表 ──
+  RENDER.group = function (el, main) {
+    var type = 'is';
+    el.innerHTML = '<div class="chips" style="margin-bottom:12px" role="tablist"><button class="chip on" type="button" data-t="is">損益表</button><button class="chip" type="button" data-t="bs">資產負債表</button></div><div id="gCtl"></div><div id="gOut"></div>';
+    setHeadActions(main, '<button class="btn" type="button" id="gPrint">列印</button>');
+    $('#gPrint').onclick = function () { window.print(); };
+    $all('[data-t]', el).forEach(function (b) {
+      b.onclick = function () { type = b.getAttribute('data-t'); $all('[data-t]', el).forEach(function (x) { x.classList.toggle('on', x === b); }); draw(); };
+    });
+    function draw() {
+      var ctl = $('#gCtl');
+      if (type === 'is') rangeControls(ctl, quickRange('thisMonth'), run);
+      else rangeControls(ctl, { asOf: today() }, run, { asOf: true });
+    }
+    function run(p) {
+      p.type = type;
+      call('consolidated', p).then(function (r) {
+        var cos = r.companies;
+        var head = '<tr><th>項目</th>' + cos.map(function (c) { return '<th class="num">' + esc(c.name) + '</th>'; }).join('') + '<th class="num">合併</th></tr>';
+        var cell = function (m, total) { return cos.map(function (c) { return '<td class="num">' + (c.empty ? '<span class="muted">—</span>' : money(m[c.id] || 0)) + '</td>'; }).join('') + '<td class="num"><b>' + money(total) + '</b></td>'; };
+        var sm = r.summary;
+        var sumRow = function (label, key, cls) { var m = sm[key] || { total: 0 }; return '<tr class="' + (cls || 'subtotal') + '"><td>' + label + '</td>' + cell(m, m.total) + '</tr>'; };
+        var rows = '';
+        var after = r.type === 'is'
+          ? { '營業成本': ['營業毛利', 'grossProfit'], '營業費用': ['營業淨利', 'operatingIncome'], '營業外支出': ['稅前淨利', 'pretaxIncome'], '所得稅費用': ['本期淨利', 'netIncome', 'total'] }
+          : { '非流動資產': ['資產總計', 'assets', 'total'], '非流動負債': ['負債總計', 'liabilities'], '權益': ['負債及權益總計', 'liabilitiesAndEquity', 'total'] };
+        r.sections.forEach(function (sec) {
+          if (sec.rows.length || sec.block === '營業收入') {
+            rows += '<tr class="section"><td colspan="' + (cos.length + 2) + '">' + esc(sec.block) + '</td></tr>' +
+              sec.rows.map(function (x) { return '<tr><td class="indent">' + (x.code ? '<span class="code">' + esc(x.code) + '</span> ' : '') + esc(x.name) + '</td>' + cell(x.amounts, x.total) + '</tr>'; }).join('') +
+              '<tr class="subtotal"><td>' + esc(sec.block) + '合計</td>' + cell(sec.totals, sec.total) + '</tr>';
+          }
+          var a = after[sec.block];
+          if (a) rows += sumRow(a[0], a[1], a[2]);
+        });
+        var notes = cos.filter(function (c) { return c.empty; }).map(function (c) { return c.name + '：' + c.note; });
+        var range = r.type === 'is' ? (p.from + ' ～ ' + p.to) : ('截至 ' + p.asOf);
+        $('#gOut').innerHTML = (notes.length ? '<div class="notice warn">' + esc(notes.join('；')) + '</div>' : '') +
+          (r.type === 'bs' && sm.difference && sm.difference.total ? '<div class="notice bad">合併後資產與負債＋權益相差 ' + fmt(sm.difference.total) + '，請檢查各公司期初餘額。</div>' : '') +
+          '<div class="card"><div class="report-title"><div class="co">集團' + (r.type === 'is' ? '損益表' : '資產負債表') + '</div><div class="rng">' + esc(range) + '</div></div>' +
+          '<div class="table-wrap"><table><thead>' + head + '</thead><tbody>' + rows + '</tbody></table></div>' +
+          '<p class="muted small">合併欄為各公司直接加總，尚未沖銷公司間往來（例如公版食品賣給公版餐飲的貨款），合併營收與往來科目可能重複計算。</p></div>';
+      }).catch(function (e) { $('#gOut').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    }
+    draw();
+  };
+
+  // ── 操作紀錄 ──
+  RENDER.log = function (el) {
+    return call('listLog', { limit: 300 }).then(function (list) {
+      el.innerHTML = '<div class="card"><p class="muted small">最近 300 筆</p><div class="table-wrap"><table><thead><tr><th>時間</th><th>公司</th><th>帳號</th><th>動作</th><th>內容</th></tr></thead><tbody>' +
+        list.map(function (x) { return '<tr><td class="small" style="white-space:nowrap">' + esc(x.time) + '</td><td class="small">' + esc(x.company) + '</td><td>' + esc(x.user) + '</td><td style="white-space:nowrap">' + esc(x.action) + '</td><td class="small">' + esc(x.detail) + '</td></tr>'; }).join('') +
+        '</tbody></table></div></div>';
+    });
+  };
+
+  // ── 變更密碼 ──
+  RENDER.password = function (el) {
+    el.innerHTML = '<div class="card" style="max-width:420px"><form id="pwForm" autocomplete="off">' +
+      '<label>目前密碼<input type="password" id="pwOld" autocomplete="current-password" required></label>' +
+      '<label style="margin-top:10px">新密碼（至少 8 碼，含英文與數字）<input type="password" id="pwNew" autocomplete="new-password" required></label>' +
+      '<label style="margin-top:10px">再輸入一次新密碼<input type="password" id="pwNew2" autocomplete="new-password" required></label>' +
+      '<p class="error-text" id="pwErr" role="alert"></p><div class="modal-foot"><button class="btn primary" type="submit">變更密碼</button></div></form></div>';
+    $('#pwForm').onsubmit = function (ev) {
+      ev.preventDefault();
+      $('#pwErr').textContent = '';
+      if ($('#pwNew').value !== $('#pwNew2').value) { $('#pwErr').textContent = '兩次輸入的新密碼不同'; return; }
+      call('changePassword', { oldPassword: $('#pwOld').value, newPassword: $('#pwNew').value }).then(function (r) {
+        S.token = r.token;
+        store.set('acct_token', S.token);
+        toast('密碼已變更，其他裝置的登入已登出');
+        $('#pwForm').reset();
+      }).catch(function (e) { $('#pwErr').textContent = e.message; });
+    };
+  };
+
+  // ── 操作說明 ──
+  RENDER.help = function (el) {
+    var role = S.boot.user.role;
+    var h = '<div class="card help">';
+    if (role === '助理') {
+      h += '<h3 style="margin-top:0">您可以做的事</h3><ul><li>「傳票」：選月份查看傳票，點一張傳票展開分錄。</li><li>「日記簿」：依日期區間查看所有分錄。</li><li>「變更密碼」：第一次登入請先改成自己的密碼。</li></ul><p class="muted">第二期會開放上傳發票、收據照片，由系統自動辨識。</p>';
+    } else {
+      h += '<h3 style="margin-top:0">每天／每週：記傳票</h3><ol>' +
+        '<li>先看右上角是不是要記帳的那家公司（多家公司時可在右上角切換，頂端色條顏色代表公司）。</li>' +
+        '<li>到「傳票」按「＋ 新增傳票」。常見交易先選「常用範本」，有營業稅的範本只要輸入含稅金額，系統自動拆未稅與 5% 稅額。</li><li>沒有合適範本時：選日期、類型（收入／支出／轉帳），填摘要。</li>' +
+        '<li>每一行選科目（可輸入代碼或名稱），填借方或貸方金額。按「＋ 加一行」會自動帶入差額。</li>' +
+        '<li>借方合計等於貸方合計才能儲存。</li></ol>' +
+        '<p class="muted small">常見分錄：營收入帳＝借 銀行存款／貸 餐飲收入、貸 銷項稅額；食材進貨＝借 食材及飲料進貨、借 進項稅額／貸 銀行存款或應付帳款；店租＝借 租金支出／貸 銀行存款。</p>' +
+        '<h3>每月底：盤點、鎖帳、看報表</h3><ol>' +
+        '<li>「月底盤點」：輸入各存貨科目的盤點金額，系統自動產生調整傳票，算出本月真正的成本。</li>' +
+        '<li>看「損益表」「資產負債表」，確認數字合理；可按「寫入試算表」把報表存到試算表分頁。</li>' +
+        '<li>「期間鎖帳」：確認無誤後鎖帳，該月就不能再修改。</li></ol>' +
+        '<h3>傳票寫錯怎麼辦</h3><ul><li>未鎖帳：展開傳票按「修改」或「作廢」（作廢需填原因，號碼不重複使用）。</li><li>已鎖帳：在本月新增一張調整傳票，摘要註明原傳票號碼。需要改舊帳時請管理者解鎖。</li></ul>';
+      if (S.boot.user.groupRole === '管理者') {
+        h += '<h3>集團管理者</h3><ul><li>「公司管理」：新增公司（自動建立該公司的試算表與建議科目）、改名、停用。</li>' +
+          '<li>「帳號與權限」：每個人可以設定在每家公司的角色，例如在公版餐飲是會計、在公版食品是助理。</li>' +
+          '<li>「集團報表」：損益表、資產負債表每家公司一欄，最後一欄是合併數（尚未沖銷公司間往來）。</li></ul>';
+      }
+      if (role === '管理者') {
+        h += '<h3>管理者第一次設定</h3><ol><li>「公司設定」：公司名稱、產業類別、營業稅類型、開帳日。</li><li>「會計科目」→「科目參考庫」→「依公司產業一次加入建議科目」，再停用用不到的、新增自訂科目。</li>' +
+          '<li>「期初餘額」：輸入開帳日當天的資產、負債、權益餘額（借貸要平衡）。</li><li>「帳號與權限」（集團管理者）：幫會計、助理開帳號並指派公司，臨時密碼只顯示一次。</li></ol>' +
+          '<h3>忘記密碼</h3><ul><li>其他人忘記：集團管理者在「帳號與權限」按「重設密碼」。</li><li>管理者自己忘記：打開試算表 → 上方選單「公版會計系統」→「重設 admin 密碼」。</li></ul>';
+      }
+    }
+    h += '</div>';
+    el.innerHTML = h;
+  };
+
+  // ───────────── 啟動 ─────────────
+  var saved = store.get('acct_token');
+  if (saved) { S.token = saved; start(); } else showLogin('');
+})();
+</script>
