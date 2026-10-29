@@ -1,5 +1,5 @@
 /**
- * 公版會計系統 v0.1.0（手動貼上版，由 tools/build-dist.js 產生，請勿直接修改）
+ * 公版會計系統 v0.2.0（手動貼上版，由 tools/build-dist.js 產生，請勿直接修改）
  * 原始碼：https://github.com/ccchen0263-tech/generic-accounting-gas
  */
 // ===== 00_Config.js =====
@@ -9,7 +9,7 @@
  */
 var APP = {
   name: '公版會計系統',
-  version: '0.1.0'
+  version: '0.2.0'
 };
 
 var SHEETS = {
@@ -23,9 +23,16 @@ var SHEETS = {
   RPT_TB: '報表_試算表',
   RPT_IS: '報表_損益表',
   RPT_BS: '報表_資產負債表',
+  COMPANIES: '公司清單',
   USERS: '_帳號',
+  ACCESS: '_公司權限',
   LOG: '_操作紀錄'
 };
+
+/** 集團主檔上的工作表（帳號、公司清單、權限、操作紀錄）；其餘工作表在各公司自己的試算表 */
+var HUB_SHEETS = [SHEETS.COMPANIES, SHEETS.USERS, SHEETS.ACCESS, SHEETS.LOG];
+/** 每家公司試算表上的工作表 */
+var COMPANY_SHEETS = [SHEETS.SETTINGS, SHEETS.ACCOUNTS, SHEETS.OPENING, SHEETS.VOUCHERS, SHEETS.PERIODS, SHEETS.STOCKTAKE, SHEETS.REF];
 
 var HEADERS = {};
 HEADERS[SHEETS.SETTINGS] = ['項目', '值', '說明'];
@@ -36,7 +43,9 @@ HEADERS[SHEETS.VOUCHERS] = ['傳票號碼', '日期', '類型', '行號', '科�
 HEADERS[SHEETS.PERIODS] = ['期間', '狀態', '鎖定人', '鎖定時間'];
 HEADERS[SHEETS.STOCKTAKE] = ['期間', '存貨科目', '存貨名稱', '帳上金額', '盤點金額', '差額', '對應成本科目', '傳票號碼', '建立者', '建立時間'];
 HEADERS[SHEETS.USERS] = ['帳號', '姓名', '角色', '鹽', '密碼雜湊', '啟用', '建立時間', '最後登入'];
-HEADERS[SHEETS.LOG] = ['時間', '帳號', '動作', '內容'];
+HEADERS[SHEETS.LOG] = ['時間', '帳號', '動作', '內容', '公司'];
+HEADERS[SHEETS.COMPANIES] = ['公司代碼', '公司名稱', '試算表ID', '啟用', '建立時間'];
+HEADERS[SHEETS.ACCESS] = ['帳號', '公司代碼', '角色'];
 
 /** 這些欄位一律存成文字，避免代碼前置零或日期被試算表自動轉換 */
 var TEXT_COLUMNS = {};
@@ -48,6 +57,8 @@ TEXT_COLUMNS[SHEETS.PERIODS] = ['期間', '鎖定時間'];
 TEXT_COLUMNS[SHEETS.STOCKTAKE] = ['期間', '存貨科目', '對應成本科目', '傳票號碼', '建立時間'];
 TEXT_COLUMNS[SHEETS.USERS] = ['帳號', '建立時間', '最後登入'];
 TEXT_COLUMNS[SHEETS.LOG] = ['時間'];
+TEXT_COLUMNS[SHEETS.COMPANIES] = ['公司代碼', '試算表ID', '建立時間'];
+TEXT_COLUMNS[SHEETS.ACCESS] = ['帳號', '公司代碼'];
 TEXT_COLUMNS[SHEETS.SETTINGS] = ['值'];
 
 /** 公司設定的預設值 */
@@ -83,7 +94,10 @@ var BLOCKS = {
 
 var VOUCHER_TYPES = ['收入', '支出', '轉帳'];
 
+/** 在某家公司的角色 */
 var ROLES = ['管理者', '會計', '助理'];
+/** 集團層級身分：管理者＝所有公司的管理者，並可管理公司與帳號；成員＝依「公司權限」逐家設定 */
+var GROUP_ROLES = ['管理者', '成員'];
 
 /**
  * 權限表：每個 API 動作允許哪些角色。
@@ -118,11 +132,13 @@ var PERMISSIONS = {
   toggleAccount:    ['管理者'],
   getSettings:      ['管理者', '會計'],
   saveSettings:     ['管理者'],
-  listUsers:        ['管理者'],
-  saveUser:         ['管理者'],
-  resetPassword:    ['管理者'],
-  listLog:          ['管理者']
+  voucherTemplates: ['管理者', '會計']
 };
+
+/** 只有集團管理者能執行的動作（不分公司） */
+var GROUP_ACTIONS = ['listUsers', 'saveUser', 'resetPassword', 'listLog', 'listCompanies', 'createCompany', 'saveCompany'];
+/** 集團報表：可看「自己是管理者或會計」的公司，至少兩家才顯示 */
+var CONSOLIDATED_ROLES = ['管理者', '會計'];
 
 var LOGIN_MAX_FAILS = 5;
 var LOGIN_LOCK_SECONDS = 600;
@@ -842,11 +858,164 @@ function dashboard_(accounts, opening, lines, today, fyStartMonth) {
   };
 }
 
+// ───────────── 集團合併 ─────────────
+
+/**
+ * 把多家公司的損益表或資產負債表並排，並加總成合併數
+ * items = [{ id, name, statement }]，statement 為 incomeStatement_ 或 balanceSheet_ 的結果（無資料可為 null）
+ * 科目以代碼對齊（系統計算列如「本期損益」以名稱對齊）；名稱取第一家公司的
+ * 注意：尚未沖銷公司間往來
+ */
+function mergeStatements_(items) {
+  var sections = {};
+  var order = [];
+  var summary = {};
+  items.forEach(function (it) {
+    var st = it.statement;
+    if (!st) return;
+    st.sections.forEach(function (sec) {
+      if (!sections[sec.block]) { sections[sec.block] = { block: sec.block, rows: {}, rowOrder: [], totals: {}, total: 0 }; order.push(sec.block); }
+      var S = sections[sec.block];
+      sec.rows.forEach(function (r) {
+        var key = r.code || ('#' + r.name);
+        if (!S.rows[key]) { S.rows[key] = { code: r.code, name: r.name, computed: !!r.computed, amounts: {}, total: 0 }; S.rowOrder.push(key); }
+        S.rows[key].amounts[it.id] = (S.rows[key].amounts[it.id] || 0) + r.amount;
+        S.rows[key].total += r.amount;
+      });
+      S.totals[it.id] = (S.totals[it.id] || 0) + sec.total;
+      S.total += sec.total;
+    });
+    Object.keys(st.summary).forEach(function (k) {
+      if (typeof st.summary[k] !== 'number') return;
+      if (!summary[k]) summary[k] = { total: 0 };
+      summary[k][it.id] = st.summary[k];
+      summary[k].total += st.summary[k];
+    });
+  });
+  return {
+    companies: items.map(function (it) { return { id: it.id, name: it.name, empty: !it.statement, note: it.note || '' }; }),
+    sections: order.map(function (b) {
+      var S = sections[b];
+      var keys = S.rowOrder.slice().sort(function (a, c) {
+        var ra = S.rows[a], rc = S.rows[c];
+        if (ra.computed !== rc.computed) return ra.computed ? 1 : -1;
+        return (ra.code || '') < (rc.code || '') ? -1 : (ra.code || '') > (rc.code || '') ? 1 : 0;
+      });
+      return { block: b, rows: keys.map(function (k) { return S.rows[k]; }), totals: S.totals, total: S.total };
+    }),
+    summary: summary
+  };
+}
+
+// ===== 15_Templates.js =====
+/**
+ * 常用傳票範本
+ * 新增傳票時選一個範本，科目與借貸自動帶入。
+ * 每行格式：[科目代碼, 'D' 借方 | 'C' 貸方, 金額來源]
+ *   金額來源：'total' 含稅總額（或單一金額）、'net' 未稅、'tax' 稅額（5%）、'' 自己填
+ * 有 net／tax 的範本，畫面會要求輸入「含稅金額」，系統自動拆：未稅＝四捨五入(含稅 ÷ 1.05)，稅額＝含稅 − 未稅。
+ * 只會顯示「公司產業相符」且「所有科目都已啟用」的範本。
+ */
+var VOUCHER_TEMPLATES = [
+  // ── 餐飲：營收 ──
+  { id: 'r-cash', name: '現金營收（含稅）', industries: '餐飲', type: '收入', memo: '現金營收', lines: [['1111', 'D', 'total'], ['4121', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'r-card', name: '刷卡營收（含稅）', industries: '餐飲', type: '收入', memo: '刷卡營收', lines: [['1142', 'D', 'total'], ['4121', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'r-takeout', name: '外帶營收（含稅）', industries: '餐飲', type: '收入', memo: '外帶營收', lines: [['1111', 'D', 'total'], ['4122', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'r-delivery', name: '外送平台營收（含稅）', industries: '餐飲', type: '收入', memo: '外送平台營收', lines: [['1143', 'D', 'total'], ['4123', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'r-delivery-pay', name: '外送平台撥款（扣抽成）', industries: '餐飲', type: '轉帳', memo: '外送平台撥款', lines: [['1113', 'D', ''], ['6332', 'D', ''], ['1143', 'C', '']] },
+  { id: 'r-card-pay', name: '信用卡撥款（扣手續費）', industries: '餐飲,食品買賣', type: '轉帳', memo: '信用卡撥款', lines: [['1113', 'D', ''], ['6331', 'D', ''], ['1142', 'C', '']] },
+  { id: 'r-voucher', name: '售出禮券（預收）', industries: '餐飲', type: '收入', memo: '售出禮券', lines: [['1111', 'D', 'total'], ['2182', 'C', 'total']] },
+  // ── 餐飲：成本與費用 ──
+  { id: 'r-food-cash', name: '食材進貨－付現（含稅）', industries: '餐飲', type: '支出', memo: '食材進貨', lines: [['5171', 'D', 'net'], ['1191', 'D', 'tax'], ['1111', 'C', 'total']] },
+  { id: 'r-food-credit', name: '食材進貨－月結（含稅）', industries: '餐飲', type: '轉帳', memo: '食材進貨（月結）', lines: [['5171', 'D', 'net'], ['1191', 'D', 'tax'], ['2131', 'C', 'total']] },
+  { id: 'r-pack', name: '外帶包材（含稅）', industries: '餐飲', type: '支出', memo: '外帶包材', lines: [['6341', 'D', 'net'], ['1191', 'D', 'tax'], ['1111', 'C', 'total']] },
+  { id: 'r-clean', name: '清潔衛生費（含稅）', industries: '餐飲', type: '支出', memo: '清潔衛生費', lines: [['6351', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+
+  // ── 食品：進貨與生產 ──
+  { id: 'f-raw', name: '原料進貨－月結（含稅）', industries: '食品製造', type: '轉帳', memo: '原料進貨（月結）', lines: [['5131', 'D', 'net'], ['1191', 'D', 'tax'], ['2131', 'C', 'total']] },
+  { id: 'f-raw-cash', name: '原料進貨－付現（含稅）', industries: '食品製造', type: '支出', memo: '原料進貨', lines: [['5131', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'f-pack', name: '包材進貨－月結（含稅）', industries: '食品製造', type: '轉帳', memo: '包材進貨（月結）', lines: [['5132', 'D', 'net'], ['1191', 'D', 'tax'], ['2131', 'C', 'total']] },
+  { id: 'f-goods', name: '選品商品進貨－月結（含稅）', industries: '食品買賣', type: '轉帳', memo: '商品進貨（月結）', lines: [['5121', 'D', 'net'], ['1191', 'D', 'tax'], ['2131', 'C', 'total']] },
+  { id: 'f-factory-util', name: '工廠水電瓦斯（含稅）', industries: '食品製造', type: '支出', memo: '工廠水電瓦斯', lines: [['5152', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'f-factory-rent', name: '工廠租金（含稅發票）', industries: '食品製造', type: '支出', memo: '工廠租金', lines: [['5154', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'f-line-pay', name: '產線薪資發放', industries: '食品製造', type: '支出', memo: '產線薪資', lines: [['5141', 'D', ''], ['2191', 'C', ''], ['1113', 'C', '']] },
+  // ── 食品：銷售與收款 ──
+  { id: 'f-sale-own', name: '自製產品銷貨－月結客戶（含稅）', industries: '食品製造', type: '轉帳', memo: '自製產品銷貨', lines: [['1141', 'D', 'total'], ['4111', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'f-sale-goods', name: '選品商品銷貨－月結客戶（含稅）', industries: '食品買賣', type: '轉帳', memo: '商品銷貨', lines: [['1141', 'D', 'total'], ['4112', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'f-ec-own', name: '電商銷售－自製產品（含稅）', industries: '食品製造', type: '轉帳', memo: '電商銷售（自製）', lines: [['1144', 'D', 'total'], ['4111', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'f-ec-goods', name: '電商銷售－選品（含稅）', industries: '食品買賣', type: '轉帳', memo: '電商銷售（選品）', lines: [['1144', 'D', 'total'], ['4112', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'f-ec-pay', name: '電商平台撥款（扣手續費）', industries: '食品製造,食品買賣', type: '轉帳', memo: '電商平台撥款', lines: [['1113', 'D', ''], ['6333', 'D', ''], ['1144', 'C', '']] },
+  { id: 'f-preorder', name: '預購先收款', industries: '食品製造,食品買賣', type: '收入', memo: '預購收款', lines: [['1113', 'D', 'total'], ['2181', 'C', 'total']] },
+  { id: 'f-ship', name: '出貨運費（含稅）', industries: '食品製造,食品買賣', type: '支出', memo: '出貨運費', lines: [['6151', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'f-test', name: '食品檢驗費（含稅）', industries: '食品製造,食品買賣', type: '支出', memo: '食品檢驗費', lines: [['6391', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+
+  // ── 通用 ──
+  { id: 'g-collect', name: '收回客戶貨款', industries: '通用', type: '收入', memo: '收回貨款', lines: [['1113', 'D', 'total'], ['1141', 'C', 'total']] },
+  { id: 'g-pay-ap', name: '支付月結貨款', industries: '通用', type: '支出', memo: '支付月結貨款', lines: [['2131', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-rent', name: '店租／辦公室租金（含稅發票）', industries: '通用', type: '支出', memo: '租金', lines: [['6121', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'g-rent-person', name: '租金（房東個人，無發票）', industries: '通用', type: '支出', memo: '租金', lines: [['6121', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-util', name: '水電瓦斯（含稅）', industries: '通用', type: '支出', memo: '水電瓦斯', lines: [['6191', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'g-phone', name: '電話網路費（含稅）', industries: '通用', type: '支出', memo: '電話網路費', lines: [['6161', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'g-pos', name: 'POS／軟體月租（含稅）', industries: '通用', type: '支出', memo: '軟體月租', lines: [['6371', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'g-salary', name: '薪資發放（扣員工自付勞健保）', industries: '通用', type: '支出', memo: '薪資', lines: [['6111', 'D', ''], ['6112', 'D', ''], ['2191', 'C', ''], ['1113', 'C', '']] },
+  { id: 'g-insurance', name: '勞健保繳款（公司＋員工自付）', industries: '通用', type: '支出', memo: '勞健保', lines: [['6201', 'D', ''], ['2191', 'D', ''], ['1113', 'C', '']] },
+  { id: 'g-pension', name: '勞退提撥', industries: '通用', type: '支出', memo: '勞退提撥', lines: [['6311', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-petty', name: '零用金支付雜支', industries: '通用', type: '支出', memo: '雜支', lines: [['6399', 'D', 'total'], ['1112', 'C', 'total']] },
+  { id: 'g-petty-fill', name: '零用金撥補', industries: '通用', type: '轉帳', memo: '零用金撥補', lines: [['1112', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-cash-deposit', name: '現金存入銀行', industries: '通用', type: '轉帳', memo: '現金存入銀行', lines: [['1113', 'D', 'total'], ['1111', 'C', 'total']] },
+  { id: 'g-owner-paid', name: '股東代墊費用', industries: '通用', type: '轉帳', memo: '股東代墊', lines: [['6399', 'D', 'total'], ['2193', 'C', 'total']] },
+  { id: 'g-entertain', name: '交際費（進項不得扣抵）', industries: '通用', type: '支出', memo: '交際費', lines: [['6211', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-staff-meal', name: '員工伙食', industries: '通用', type: '支出', memo: '員工伙食', lines: [['6271', 'D', 'total'], ['1111', 'C', 'total']] },
+  { id: 'g-vat', name: '營業稅繳納（銷項 − 進項）', industries: '通用', type: '支出', memo: '營業稅繳納', lines: [['2161', 'D', ''], ['1191', 'C', ''], ['1113', 'C', '']] },
+  { id: 'g-account-fee', name: '記帳／會計師公費', industries: '通用', type: '支出', memo: '記帳費', lines: [['6321', 'D', 'total'], ['1113', 'C', 'total']] }
+];
+
+/** 依公司產業與已啟用科目，挑出可用的範本 */
+function templatesFor_(industries, accounts) {
+  var inds = (industries || []).concat(['通用']);
+  var enabled = {};
+  accounts.forEach(function (a) { if (a.enabled) enabled[a.code] = a; });
+  return VOUCHER_TEMPLATES.filter(function (t) {
+    var ok = t.industries.split(',').some(function (i) { return inds.indexOf(i) >= 0; });
+    return ok && t.lines.every(function (l) { return enabled[l[0]]; });
+  }).map(function (t) {
+    var split = t.lines.some(function (l) { return l[2] === 'net' || l[2] === 'tax'; });
+    var single = !split && t.lines.every(function (l) { return l[2] === 'total'; });
+    return {
+      id: t.id, name: t.name, type: t.type, memo: t.memo, industries: t.industries,
+      amountMode: split ? 'tax' : single ? 'single' : 'manual',
+      lines: t.lines.map(function (l) { return { code: l[0], side: l[1], part: l[2] }; })
+    };
+  });
+}
+
+/** 含稅金額拆未稅與稅額（5%） */
+function splitTax_(total) {
+  var net = Math.round(total / 1.05);
+  return { net: net, tax: total - net };
+}
+
+/** 依範本與金額產生分錄（測試與前端共用相同規則） */
+function applyTemplate_(tpl, amount) {
+  var parts = tpl.amountMode === 'tax' ? splitTax_(amount) : { net: amount, tax: 0 };
+  return tpl.lines.map(function (l) {
+    var v = l.part === 'total' ? amount : l.part === 'net' ? parts.net : l.part === 'tax' ? parts.tax : 0;
+    return { code: l.code, debit: l.side === 'D' ? v : 0, credit: l.side === 'C' ? v : 0 };
+  });
+}
+
 // ===== 20_Store.js =====
 /**
  * 試算表讀寫層：所有工作表存取都集中在這裡
  */
-function ss_() {
+/**
+ * 目前這次操作所屬的公司（由 api() 依登入者與切換的公司設定）
+ * company = { id, name, spreadsheetId }；null 代表集團主檔本身
+ */
+var CTX = { company: null, ssCache: {} };
+
+/** 集團主檔：程式綁定的那份試算表 */
+function hubSs_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (ss) return ss;
   var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
@@ -854,8 +1023,17 @@ function ss_() {
   return SpreadsheetApp.openById(id);
 }
 
+/** 目前公司的試算表 */
+function ss_() {
+  var c = CTX.company;
+  var hub = hubSs_();
+  if (!c || c.spreadsheetId === hub.getId()) return hub;
+  if (!CTX.ssCache[c.spreadsheetId]) CTX.ssCache[c.spreadsheetId] = SpreadsheetApp.openById(c.spreadsheetId);
+  return CTX.ssCache[c.spreadsheetId];
+}
+
 function sheet_(name) {
-  var sh = ss_().getSheetByName(name);
+  var sh = (HUB_SHEETS.indexOf(name) >= 0 ? hubSs_() : ss_()).getSheetByName(name);
   if (!sh) throw new Error('找不到工作表「' + name + '」，請先執行初始設定');
   return sh;
 }
@@ -1079,7 +1257,7 @@ function lockedPeriodsMap_() {
 
 function log_(user, action, detail) {
   try {
-    appendObjects_(SHEETS.LOG, [{ '時間': nowText_(), '帳號': user || '', '動作': action, '內容': typeof detail === 'string' ? detail : JSON.stringify(detail) }]);
+    appendObjects_(SHEETS.LOG, [{ '時間': nowText_(), '帳號': user || '', '動作': action, '內容': typeof detail === 'string' ? detail : JSON.stringify(detail), '公司': CTX.company ? CTX.company.name : '' }]);
   } catch (e) {
     // 紀錄失敗不影響主要操作
   }
@@ -1188,7 +1366,7 @@ function sessionFromToken_(token) {
   // 每次確認帳號仍啟用、角色以帳號表為準（改權限立即生效）
   var u = findUser_(s.username);
   if (!u || !u.enabled || s.cred !== credTag_(u)) return null;
-  return { username: u.username, name: u.name, role: u.role };
+  return { username: u.username, name: u.name, groupRole: u.role === '管理者' ? '管理者' : '成員' };
 }
 
 function can_(role, action) {
@@ -1196,11 +1374,11 @@ function can_(role, action) {
   return !!allowed && allowed.indexOf(role) >= 0;
 }
 
-/** 新增帳號（回傳臨時密碼，只顯示一次） */
+/** 新增帳號（回傳臨時密碼，只顯示一次）；role 為集團身分：管理者／成員 */
 function createUser_(username, name, role) {
   username = str_(username);
   if (!/^[A-Za-z0-9_.-]{3,30}$/.test(username)) throw new Error('帳號需為 3～30 碼英數字');
-  if (ROLES.indexOf(role) < 0) throw new Error('角色不正確');
+  if (GROUP_ROLES.indexOf(role) < 0) throw new Error('身分不正確');
   if (findUser_(username)) throw new Error('帳號 ' + username + ' 已存在');
   var salt = newSalt_();
   var pw = randomPassword_();
@@ -1233,16 +1411,41 @@ function include(name) {
   return HtmlService.createHtmlOutputFromFile(name).getContent();
 }
 
+/**
+ * payload._company：前端目前選的公司代碼。
+ * 除了 bootstrap 以外，指定了沒有權限的公司一律拒絕，避免資料寫到別家公司。
+ */
 function api(token, action, payload) {
+  CTX.company = null;
+  CTX.ssCache = {};
   try {
+    payload = payload || {};
     var session = sessionFromToken_(token);
     if (!session) return { ok: false, error: '登入已逾時，請重新登入', relogin: true };
     if (!HANDLERS[action]) return { ok: false, error: '不明的操作：' + action };
-    if (!can_(session.role, action)) return { ok: false, error: '您沒有權限執行此操作' };
-    var data = HANDLERS[action](payload || {}, session);
+    var list = accessibleCompanies_(session);
+    if (!list.length) return { ok: false, error: '您的帳號還沒有被指派任何公司，請洽集團管理者' };
+    var pick = list.filter(function (x) { return x.company.id === payload._company; })[0];
+    if (!pick) {
+      if (payload._company && action !== 'bootstrap') return { ok: false, error: '您沒有這家公司的權限，畫面將重新整理', switchCompany: true };
+      pick = list[0];
+    }
+    CTX.company = pick.company;
+    session.role = pick.role;
+    session.companyId = pick.company.id;
+    session.companies = list;
+    if (GROUP_ACTIONS.indexOf(action) >= 0) {
+      if (session.groupRole !== '管理者') return { ok: false, error: '只有集團管理者可以執行此操作' };
+    } else if (action !== 'consolidated' && !can_(session.role, action)) {
+      return { ok: false, error: '您沒有權限執行此操作' };
+    }
+    var data = HANDLERS[action](payload, session);
     return { ok: true, data: data };
   } catch (e) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
+  } finally {
+    CTX.company = null;
+    CTX.ssCache = {};
   }
 }
 
@@ -1252,12 +1455,19 @@ var HANDLERS = {};
 
 HANDLERS.bootstrap = function (p, s) {
   var allowed = Object.keys(PERMISSIONS).filter(function (a) { return can_(s.role, a); });
+  if (s.groupRole === '管理者') allowed = allowed.concat(GROUP_ACTIONS);
+  if (consolidatedCompanies_(s).length >= 2) allowed.push('consolidated');
+  var settings = loadSettings_();
+  var accounts = loadAccounts_();
   return {
     app: APP,
-    user: s,
+    user: { username: s.username, name: s.name, role: s.role, groupRole: s.groupRole },
+    company: { id: CTX.company.id, name: CTX.company.name },
+    companies: s.companies.map(function (x, i) { return { id: x.company.id, name: x.company.name, role: x.role, color: i }; }),
     allowed: allowed,
-    settings: loadSettings_(),
-    accounts: loadAccounts_(),
+    settings: settings,
+    accounts: accounts,
+    templates: templatesFor_(settings.industries, accounts),
     lockedPeriods: lockedPeriodsMap_(),
     blocks: Object.keys(BLOCKS).map(function (b) { return { name: b, category: BLOCKS[b].category, normal: BLOCKS[b].normal, statement: BLOCKS[b].statement }; }),
     industries: INDUSTRIES,
@@ -1316,7 +1526,7 @@ function saveVoucherCore_(p, s) {
     if (!no) {
       var period = v.date.slice(0, 7);
       var props = PropertiesService.getScriptProperties();
-      var key = 'SEQ_' + period.replace('-', '');
+      var key = 'SEQ_' + (CTX.company ? CTX.company.id + '_' : '') + period.replace('-', '');
       var next = nextVoucherNo_(all.map(function (l) { return l.no; }), period, props.getProperty(key));
       no = next.no;
       props.setProperty(key, String(next.seq));
@@ -1786,38 +1996,18 @@ HANDLERS.saveSettings = function (p, s) {
     }
     if (errors.length) throw new Error(errors.join('\n'));
     saveSettings_(st);
+    // 公司名稱同步到集團的公司清單
+    if (CTX.company && st.companyName !== CTX.company.name) {
+      var row = loadCompanies_().filter(function (c) { return c.id === CTX.company.id; })[0];
+      if (row) updateCells_(SHEETS.COMPANIES, row._row, { '公司名稱': st.companyName });
+      CTX.company.name = st.companyName;
+    }
     log_(s.username, '修改公司設定', st);
     return st;
   });
 };
 
 // ───────────── 帳號 ─────────────
-
-HANDLERS.listUsers = function () {
-  return loadUsers_().map(function (u) {
-    return { username: u.username, name: u.name, role: u.role, enabled: u.enabled, createdAt: u.createdAt, lastLogin: u.lastLogin };
-  });
-};
-
-HANDLERS.saveUser = function (p, s) {
-  return withLock_(function () {
-    if (ROLES.indexOf(p.role) < 0) throw new Error('角色不正確');
-    if (p.isNew) {
-      var pw = createUser_(p.username, p.name, p.role);
-      log_(s.username, '新增帳號', p.username + '（' + p.role + '）');
-      return { username: p.username, tempPassword: pw };
-    }
-    var u = findUser_(p.username);
-    if (!u) throw new Error('帳號不存在');
-    var admins = loadUsers_().filter(function (x) { return x.enabled && x.role === '管理者'; });
-    var losingAdmin = u.role === '管理者' && (p.role !== '管理者' || p.enabled === false);
-    if (losingAdmin && admins.length <= 1) throw new Error('至少要保留一位啟用中的管理者');
-    if (u.username === s.username && losingAdmin) throw new Error('不能取消自己的管理者權限');
-    updateCells_(SHEETS.USERS, u._row, { '姓名': str_(p.name) || u.name, '角色': p.role, '啟用': p.enabled === false ? '否' : '是' });
-    log_(s.username, '修改帳號', u.username + '：' + p.role + (p.enabled === false ? '（停用）' : ''));
-    return { username: u.username };
-  });
-};
 
 HANDLERS.resetPassword = function (p, s) {
   var u = findUser_(p.username);
@@ -1839,12 +2029,269 @@ HANDLERS.changePassword = function (p, s) {
   return issueSession_(findUser_(s.username));
 };
 
+// ===== 45_Company.js =====
+/**
+ * 集團：公司清單、依公司的權限、新增公司、帳號管理、集團合併報表、傳票範本
+ */
+
+// ───────────── 公司與權限 ─────────────
+
+function loadCompanies_() {
+  return readObjects_(SHEETS.COMPANIES).map(function (o) {
+    return {
+      id: str_(o['公司代碼']), name: str_(o['公司名稱']), spreadsheetId: str_(o['試算表ID']),
+      enabled: str_(o['啟用']) !== '否', createdAt: str_(o['建立時間']), _row: o._row
+    };
+  }).filter(function (c) { return c.id && c.spreadsheetId; });
+}
+
+function loadAccess_() {
+  return readObjects_(SHEETS.ACCESS).map(function (o) {
+    return { username: str_(o['帳號']), companyId: str_(o['公司代碼']), role: str_(o['角色']), _row: o._row };
+  }).filter(function (a) { return a.username && a.companyId; });
+}
+
+/** 某人在某公司的角色；集團管理者在每家公司都是管理者 */
+function companyRoleOf_(session, companyId, access) {
+  if (session.groupRole === '管理者') return '管理者';
+  var key = session.username.toLowerCase();
+  var row = (access || loadAccess_()).filter(function (a) { return a.username.toLowerCase() === key && a.companyId === companyId; })[0];
+  return row && ROLES.indexOf(row.role) >= 0 ? row.role : null;
+}
+
+/** 這個人可以進入的公司（啟用中），依公司代碼排序 */
+function accessibleCompanies_(session) {
+  var access = session.groupRole === '管理者' ? [] : loadAccess_();
+  return loadCompanies_().filter(function (c) { return c.enabled; })
+    .sort(function (a, b) { return a.id < b.id ? -1 : 1; })
+    .map(function (c) { return { company: { id: c.id, name: c.name, spreadsheetId: c.spreadsheetId }, role: companyRoleOf_(session, c.id, access) }; })
+    .filter(function (x) { return x.role; });
+}
+
+function consolidatedCompanies_(session) {
+  return (session.companies || []).filter(function (x) { return CONSOLIDATED_ROLES.indexOf(x.role) >= 0; });
+}
+
+function nextCompanyId_(companies) {
+  var max = 0;
+  companies.forEach(function (c) { var n = Number(String(c.id).replace(/\D/g, '')); if (n > max) max = n; });
+  return 'C' + pad_(max + 1, 2);
+}
+
+/** 在目前 CTX 指到的公司試算表建立公司用的工作表與科目參考庫 */
+function initCompanySheets_(companyName) {
+  var ss = ss_();
+  COMPANY_SHEETS.forEach(function (name) { ensureSheet_(ss, name); });
+  replaceAll_(SHEETS.REF, referenceAccountObjects_().map(function (a) {
+    return {
+      '科目代碼': a.code, '科目名稱': a.name, '類別': a.category, '正常餘額': a.normal, '報表區塊': a.block,
+      '適用產業': a.industries, '盤點對應成本科目': a.stockCost, '說明': a.note
+    };
+  }));
+  var existing = {};
+  readObjects_(SHEETS.SETTINGS).forEach(function (o) { existing[str_(o['項目'])] = o; });
+  var missing = DEFAULT_SETTINGS.filter(function (d) { return !existing[d[0]]; });
+  appendObjects_(SHEETS.SETTINGS, missing.map(function (d) {
+    return { '項目': d[0], '值': d[0] === '公司名稱' ? (companyName || '') : d[1], '說明': d[2] };
+  }));
+  if (existing['公司名稱'] && !str_(existing['公司名稱']['值']) && companyName) updateCells_(SHEETS.SETTINGS, existing['公司名稱']._row, { '值': companyName });
+}
+
+// ───────────── 公司管理（集團管理者） ─────────────
+
+HANDLERS.listCompanies = function () {
+  return loadCompanies_().sort(function (a, b) { return a.id < b.id ? -1 : 1; }).map(function (c) {
+    var url = '';
+    try { url = 'https://docs.google.com/spreadsheets/d/' + c.spreadsheetId + '/edit'; } catch (e) { url = ''; }
+    return { id: c.id, name: c.name, enabled: c.enabled, createdAt: c.createdAt, url: url, isHub: c.spreadsheetId === hubSs_().getId() };
+  });
+};
+
+HANDLERS.createCompany = function (p, s) {
+  return withLock_(function () {
+    var name = str_(p.name);
+    if (!name) throw new Error('請填公司名稱');
+    var companies = loadCompanies_();
+    if (companies.some(function (c) { return c.name === name; })) throw new Error('已經有「' + name + '」');
+    var industries = (p.industries || []).filter(function (i) { return INDUSTRIES.indexOf(i) >= 0; });
+    var newSs = SpreadsheetApp.create(name + '｜會計帳');
+    // 放到集團主檔所在的資料夾
+    try {
+      var parents = DriveApp.getFileById(hubSs_().getId()).getParents();
+      if (parents.hasNext()) DriveApp.getFileById(newSs.getId()).moveTo(parents.next());
+    } catch (e) { /* 移動失敗時留在雲端硬碟根目錄 */ }
+    var id = nextCompanyId_(companies);
+    appendObjects_(SHEETS.COMPANIES, [{ '公司代碼': id, '公司名稱': name, '試算表ID': newSs.getId(), '啟用': '是', '建立時間': nowText_() }]);
+    var prev = CTX.company;
+    CTX.company = { id: id, name: name, spreadsheetId: newSs.getId() };
+    CTX.ssCache[newSs.getId()] = newSs;
+    try {
+      initCompanySheets_(name);
+      // 移除新試算表預設的空白工作表
+      newSs.getSheets().forEach(function (sh) { if (!HEADERS[sh.getName()] && newSs.getSheets().length > 1) newSs.deleteSheet(sh); });
+      var st = loadSettings_();
+      st.companyName = name;
+      st.taxId = str_(p.taxId);
+      st.industries = industries.length ? industries : ['通用'];
+      if (p.vatType) st.vatType = p.vatType;
+      saveSettings_(st);
+      if (p.addAccounts !== false) addReferenceAccounts_(referenceCodesFor_(st.industries), s);
+      log_(s.username, '新增公司', id + ' ' + name);
+    } finally {
+      CTX.company = prev;
+    }
+    return { id: id, name: name, url: 'https://docs.google.com/spreadsheets/d/' + newSs.getId() + '/edit' };
+  });
+};
+
+HANDLERS.saveCompany = function (p, s) {
+  return withLock_(function () {
+    var companies = loadCompanies_();
+    var c = companies.filter(function (x) { return x.id === p.id; })[0];
+    if (!c) throw new Error('公司不存在');
+    var name = str_(p.name) || c.name;
+    var enabled = p.enabled !== false;
+    if (!enabled && companies.filter(function (x) { return x.enabled && x.id !== c.id; }).length === 0) throw new Error('至少要保留一家啟用中的公司');
+    updateCells_(SHEETS.COMPANIES, c._row, { '公司名稱': name, '啟用': enabled ? '是' : '否' });
+    if (name !== c.name) {
+      var prev = CTX.company;
+      CTX.company = { id: c.id, name: name, spreadsheetId: c.spreadsheetId };
+      try {
+        var st = loadSettings_();
+        st.companyName = name;
+        saveSettings_(st);
+      } finally { CTX.company = prev; }
+    }
+    log_(s.username, '修改公司', c.id + ' ' + name + (enabled ? '' : '（停用）'));
+    return { id: c.id };
+  });
+};
+
+/** 依產業挑出參考庫科目代碼（含通用） */
+function referenceCodesFor_(industries) {
+  var wanted = (industries || []).concat(['通用']);
+  return loadReference_().filter(function (r) {
+    return r.industries.split(',').some(function (i) { return wanted.indexOf(str_(i)) >= 0; });
+  }).map(function (r) { return r.code; });
+}
+
+// ───────────── 帳號（集團管理者） ─────────────
+
+HANDLERS.listUsers = function () {
+  var companies = loadCompanies_();
+  var names = {};
+  companies.forEach(function (c) { names[c.id] = c.name; });
+  var access = loadAccess_();
+  return {
+    companies: companies.filter(function (c) { return c.enabled; }).map(function (c) { return { id: c.id, name: c.name }; }),
+    users: loadUsers_().map(function (u) {
+      var groupRole = u.role === '管理者' ? '管理者' : '成員';
+      return {
+        username: u.username, name: u.name, groupRole: groupRole, enabled: u.enabled, createdAt: u.createdAt, lastLogin: u.lastLogin,
+        access: groupRole === '管理者' ? [] : access.filter(function (a) { return a.username.toLowerCase() === u.username.toLowerCase(); })
+          .map(function (a) { return { companyId: a.companyId, companyName: names[a.companyId] || a.companyId, role: a.role }; })
+      };
+    })
+  };
+};
+
+/**
+ * 新增或修改帳號
+ * p = { isNew, username, name, groupRole: 管理者|成員, enabled, access: [{ companyId, role }] }
+ * 相容舊格式：p.role 為公司角色時，視為「成員」並只給目前這家公司該角色
+ */
+HANDLERS.saveUser = function (p, s) {
+  return withLock_(function () {
+    var groupRole = p.groupRole;
+    var access = p.access;
+    if (!groupRole && p.role) {
+      if (p.role === '管理者') groupRole = '管理者';
+      else { groupRole = '成員'; access = [{ companyId: CTX.company.id, role: p.role }]; }
+    }
+    if (GROUP_ROLES.indexOf(groupRole) < 0) throw new Error('身分不正確');
+    var companies = {};
+    loadCompanies_().forEach(function (c) { companies[c.id] = c; });
+    access = (groupRole === '成員' ? (access || []) : []).filter(function (a) { return a && a.role; });
+    access.forEach(function (a) {
+      if (!companies[a.companyId]) throw new Error('公司 ' + a.companyId + ' 不存在');
+      if (ROLES.indexOf(a.role) < 0) throw new Error('角色不正確：' + a.role);
+    });
+    if (groupRole === '成員' && !access.length && p.enabled !== false) throw new Error('一般成員至少要指派一家公司');
+
+    var username = str_(p.username);
+    var result = { username: username };
+    if (p.isNew) {
+      result.tempPassword = createUser_(username, p.name, groupRole);
+    } else {
+      var u = findUser_(username);
+      if (!u) throw new Error('帳號不存在');
+      username = u.username;
+      var admins = loadUsers_().filter(function (x) { return x.enabled && x.role === '管理者'; });
+      var losingAdmin = u.role === '管理者' && (groupRole !== '管理者' || p.enabled === false);
+      if (losingAdmin && admins.length <= 1) throw new Error('至少要保留一位啟用中的集團管理者');
+      if (u.username === s.username && losingAdmin) throw new Error('不能取消自己的集團管理者身分');
+      updateCells_(SHEETS.USERS, u._row, { '姓名': str_(p.name) || u.name, '角色': groupRole, '啟用': p.enabled === false ? '否' : '是' });
+    }
+    // 重寫此人的公司權限
+    var key = username.toLowerCase();
+    deleteRowNumbers_(SHEETS.ACCESS, loadAccess_().filter(function (a) { return a.username.toLowerCase() === key; }).map(function (a) { return a._row; }));
+    appendObjects_(SHEETS.ACCESS, access.map(function (a) { return { '帳號': username, '公司代碼': a.companyId, '角色': a.role }; }));
+    var desc = groupRole === '管理者' ? '集團管理者' : access.map(function (a) { return (companies[a.companyId] || {}).name + '：' + a.role; }).join('、');
+    log_(s.username, p.isNew ? '新增帳號' : '修改帳號', username + '（' + desc + '）' + (p.enabled === false ? '（停用）' : ''));
+    return result;
+  });
+};
+
 HANDLERS.listLog = function (p) {
   var rows = readObjects_(SHEETS.LOG);
   var limit = Math.min(Number(p.limit) || 200, 1000);
   return rows.slice(-limit).reverse().map(function (o) {
-    return { time: str_(o['時間']), user: str_(o['帳號']), action: str_(o['動作']), detail: str_(o['內容']) };
+    return { time: str_(o['時間']), user: str_(o['帳號']), action: str_(o['動作']), detail: str_(o['內容']), company: str_(o['公司']) };
   });
+};
+
+// ───────────── 集團合併報表 ─────────────
+
+/**
+ * p = { type: 'is' | 'bs', from, to, asOf }
+ * 每家公司各自計算（開帳日之前沒有資料的公司以空白呈現），再並排加總
+ */
+HANDLERS.consolidated = function (p, s) {
+  var list = consolidatedCompanies_(s);
+  if (list.length < 2) throw new Error('集團報表需要至少兩家您有「管理者」或「會計」權限的公司');
+  var type = p.type === 'bs' ? 'bs' : 'is';
+  var prev = CTX.company;
+  var items = [];
+  try {
+    list.forEach(function (x) {
+      CTX.company = x.company;
+      var item = { id: x.company.id, name: x.company.name, statement: null };
+      try {
+        var settings = loadSettings_();
+        if (type === 'bs') {
+          item.statement = balanceSheet_(loadAccounts_(), loadOpening_(), loadLines_(), asOfOf_(p.asOf), settings.fyStartMonth);
+        } else {
+          var r = rangeOf_(p);
+          item.statement = incomeStatement_(loadAccounts_(), loadLines_(), r.from, r.to);
+        }
+      } catch (e) {
+        item.note = e.message;
+      }
+      items.push(item);
+    });
+  } finally {
+    CTX.company = prev;
+  }
+  var merged = mergeStatements_(items);
+  merged.type = type;
+  merged.from = p.from; merged.to = p.to; merged.asOf = p.asOf;
+  return merged;
+};
+
+// ───────────── 傳票範本 ─────────────
+
+HANDLERS.voucherTemplates = function () {
+  return templatesFor_(loadSettings_().industries, loadAccounts_());
 };
 
 // ===== 50_Setup.js =====
@@ -1876,35 +2323,48 @@ function requireEditor_() {
 
 function setup() {
   requireEditor_();
-  var ss = ss_();
-  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', ss.getId());
-  var order = [SHEETS.SETTINGS, SHEETS.ACCOUNTS, SHEETS.OPENING, SHEETS.VOUCHERS, SHEETS.PERIODS, SHEETS.STOCKTAKE, SHEETS.REF, SHEETS.USERS, SHEETS.LOG];
-  order.forEach(function (name) { ensureSheet_(ss, name); });
+  var hub = hubSs_();
+  CTX.company = null;
+  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', hub.getId());
+  HUB_SHEETS.forEach(function (name) { ensureSheet_(hub, name); });
 
-  // 科目參考庫：每次執行都以程式內建版本覆蓋（公版更新時同步）
-  replaceAll_(SHEETS.REF, referenceAccountObjects_().map(function (a) {
-    return {
-      '科目代碼': a.code, '科目名稱': a.name, '類別': a.category, '正常餘額': a.normal, '報表區塊': a.block,
-      '適用產業': a.industries, '盤點對應成本科目': a.stockCost, '說明': a.note
-    };
-  }));
+  // 第一次（或從單一公司版升級）：這份試算表本身就是第一家公司
+  if (!loadCompanies_().length) {
+    var firstName = '';
+    try {
+      var sh = hub.getSheetByName(SHEETS.SETTINGS);
+      if (sh) firstName = loadSettings_().companyName;
+    } catch (e) { firstName = ''; }
+    appendObjects_(SHEETS.COMPANIES, [{ '公司代碼': 'C01', '公司名稱': firstName || '公司一', '試算表ID': hub.getId(), '啟用': '是', '建立時間': nowText_() }]);
+  }
 
-  // 公司設定：補上缺少的項目，不覆蓋已填的值
-  var existing = {};
-  readObjects_(SHEETS.SETTINGS).forEach(function (o) { existing[str_(o['項目'])] = true; });
-  var missing = DEFAULT_SETTINGS.filter(function (d) { return !existing[d[0]]; });
-  appendObjects_(SHEETS.SETTINGS, missing.map(function (d) { return { '項目': d[0], '值': d[1], '說明': d[2] }; }));
+  // 每家公司：補齊工作表、更新科目參考庫（公版更新時同步）
+  var notes = [];
+  loadCompanies_().forEach(function (c) {
+    CTX.company = { id: c.id, name: c.name, spreadsheetId: c.spreadsheetId };
+    CTX.ssCache = {};
+    try { initCompanySheets_(c.name); notes.push(c.id + ' ' + c.name + '：完成'); }
+    catch (e) { notes.push(c.id + ' ' + c.name + '：失敗（' + e.message + '）'); }
+  });
+  CTX.company = null;
 
-  ss.getSheetByName(SHEETS.USERS).hideSheet();
-  ss.getSheetByName(SHEETS.LOG).hideSheet();
+  // 舊版帳號升級：原本的「會計／助理」改成成員，並給第一家公司相同角色
+  var first = loadCompanies_()[0];
+  loadUsers_().forEach(function (u) {
+    if (u.role === '管理者' || u.role === '成員') return;
+    if (ROLES.indexOf(u.role) >= 0) appendObjects_(SHEETS.ACCESS, [{ '帳號': u.username, '公司代碼': first.id, '角色': u.role }]);
+    updateCells_(SHEETS.USERS, u._row, { '角色': '成員' });
+  });
 
-  var msg = '初始設定完成。';
+  [SHEETS.USERS, SHEETS.ACCESS, SHEETS.LOG].forEach(function (n) { hub.getSheetByName(n).hideSheet(); });
+
+  var msg = '初始設定完成。\n' + notes.join('\n');
   if (!loadUsers_().length) {
     var pw = createUser_('admin', '管理者', '管理者');
-    msg += '\n已建立管理者帳號 admin，臨時密碼：' + pw + '\n請登入後立即到「變更密碼」修改。';
+    msg += '\n已建立集團管理者帳號 admin，臨時密碼：' + pw + '\n請登入後立即到「變更密碼」修改。';
     log_('system', '初始設定', '建立 admin 帳號');
   } else {
-    log_('system', '初始設定', '更新科目參考庫');
+    log_('system', '初始設定', '更新工作表與科目參考庫');
   }
   Logger.log(msg);
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) { /* 從編輯器執行時沒有對話框，請看執行紀錄 */ }
@@ -1930,6 +2390,8 @@ function ensureSheet_(ss, name) {
 /** 選單：把本月損益、試算表與今日資產負債表寫入試算表 */
 function writeReportsThisMonth() {
   requireEditor_();
+  var hubId = hubSs_().getId();
+  CTX.company = loadCompanies_().filter(function (c) { return c.spreadsheetId === hubId; })[0] || null;
   var today = todayText_();
   writeReportSheets_(monthStart_(today.slice(0, 7)), today, today);
   log_('system', '寫入報表分頁', '選單執行');

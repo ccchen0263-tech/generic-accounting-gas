@@ -126,11 +126,15 @@
     this.setFrozenRows = function () { return self; };
   }
 
-  function FakeSpreadsheet() {
+  function FakeSpreadsheet(id, name, withDefaultSheet) {
     var sheets = {};
     var self = this;
     this.sheets = sheets;
-    this.getId = function () { return 'fake-spreadsheet-id'; };
+    this.name = name || '';
+    this.getId = function () { return id || 'fake-spreadsheet-id'; };
+    this.getUrl = function () { return 'https://docs.google.com/spreadsheets/d/' + self.getId() + '/edit'; };
+    this.deleteSheet = function (sh) { delete sheets[sh.getName()]; };
+    if (withDefaultSheet) sheets['工作表1'] = new FakeSheet('工作表1');
     this.getSheetByName = function (n) { return sheets[n] || null; };
     this.insertSheet = function (n) { if (sheets[n]) throw new Error('工作表已存在'); sheets[n] = new FakeSheet(n); return sheets[n]; };
     this.getSheets = function () { return Object.keys(sheets).map(function (k) { return sheets[k]; }); };
@@ -138,7 +142,9 @@
 
   function createFakeGas(options) {
     options = options || {};
-    var ss = new FakeSpreadsheet();
+    var ss = new FakeSpreadsheet('fake-spreadsheet-id', '集團主檔');
+    var registry = { 'fake-spreadsheet-id': ss };
+    var created = 0;
     var props = {};
     var cache = {};
     var logs = [];
@@ -159,7 +165,8 @@
     var env = {
       SpreadsheetApp: {
         getActiveSpreadsheet: function () { return ss; },
-        openById: function () { return ss; },
+        openById: function (id) { if (!registry[id]) throw new Error('找不到試算表 ' + id); return registry[id]; },
+        create: function (name) { created++; var n = new FakeSpreadsheet('fake-ss-' + created, name, true); registry[n.getId()] = n; return n; },
         getUi: function () { throw new Error('Cannot call SpreadsheetApp.getUi() from this context.'); }
       },
       PropertiesService: {
@@ -195,6 +202,14 @@
         },
         formatDate: function (date, tz, fmt) { return formatDate(date, tz, fmt); }
       },
+      DriveApp: {
+        getFileById: function (id) {
+          return {
+            getParents: function () { var done = false; return { hasNext: function () { return !done; }, next: function () { done = true; return { id: 'folder' }; } }; },
+            moveTo: function () { return this; }
+          };
+        }
+      },
       Logger: { log: function (m) { logs.push(String(m)); } },
       Session: {
         getActiveUser: function () { return { getEmail: function () { return session.email; } }; },
@@ -202,7 +217,7 @@
       },
       HtmlService: {},
       // 測試輔助
-      __ss: ss, __props: props, __cache: cache, __logs: logs, __clock: clock, __sha256: sha256Bytes,
+      __ss: ss, __registry: registry, __props: props, __cache: cache, __logs: logs, __clock: clock, __sha256: sha256Bytes,
       __nowDate: nowDate, __session: session
     };
     // 讓 new Date() 也能固定時間：測試透過 Utilities.formatDate(new Date()) 取得今天，因此改寫 formatDate 的輸入

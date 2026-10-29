@@ -14,16 +14,41 @@ function include(name) {
   return HtmlService.createHtmlOutputFromFile(name).getContent();
 }
 
+/**
+ * payload._company：前端目前選的公司代碼。
+ * 除了 bootstrap 以外，指定了沒有權限的公司一律拒絕，避免資料寫到別家公司。
+ */
 function api(token, action, payload) {
+  CTX.company = null;
+  CTX.ssCache = {};
   try {
+    payload = payload || {};
     var session = sessionFromToken_(token);
     if (!session) return { ok: false, error: '登入已逾時，請重新登入', relogin: true };
     if (!HANDLERS[action]) return { ok: false, error: '不明的操作：' + action };
-    if (!can_(session.role, action)) return { ok: false, error: '您沒有權限執行此操作' };
-    var data = HANDLERS[action](payload || {}, session);
+    var list = accessibleCompanies_(session);
+    if (!list.length) return { ok: false, error: '您的帳號還沒有被指派任何公司，請洽集團管理者' };
+    var pick = list.filter(function (x) { return x.company.id === payload._company; })[0];
+    if (!pick) {
+      if (payload._company && action !== 'bootstrap') return { ok: false, error: '您沒有這家公司的權限，畫面將重新整理', switchCompany: true };
+      pick = list[0];
+    }
+    CTX.company = pick.company;
+    session.role = pick.role;
+    session.companyId = pick.company.id;
+    session.companies = list;
+    if (GROUP_ACTIONS.indexOf(action) >= 0) {
+      if (session.groupRole !== '管理者') return { ok: false, error: '只有集團管理者可以執行此操作' };
+    } else if (action !== 'consolidated' && !can_(session.role, action)) {
+      return { ok: false, error: '您沒有權限執行此操作' };
+    }
+    var data = HANDLERS[action](payload, session);
     return { ok: true, data: data };
   } catch (e) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
+  } finally {
+    CTX.company = null;
+    CTX.ssCache = {};
   }
 }
 
@@ -33,12 +58,19 @@ var HANDLERS = {};
 
 HANDLERS.bootstrap = function (p, s) {
   var allowed = Object.keys(PERMISSIONS).filter(function (a) { return can_(s.role, a); });
+  if (s.groupRole === '管理者') allowed = allowed.concat(GROUP_ACTIONS);
+  if (consolidatedCompanies_(s).length >= 2) allowed.push('consolidated');
+  var settings = loadSettings_();
+  var accounts = loadAccounts_();
   return {
     app: APP,
-    user: s,
+    user: { username: s.username, name: s.name, role: s.role, groupRole: s.groupRole },
+    company: { id: CTX.company.id, name: CTX.company.name },
+    companies: s.companies.map(function (x, i) { return { id: x.company.id, name: x.company.name, role: x.role, color: i }; }),
     allowed: allowed,
-    settings: loadSettings_(),
-    accounts: loadAccounts_(),
+    settings: settings,
+    accounts: accounts,
+    templates: templatesFor_(settings.industries, accounts),
     lockedPeriods: lockedPeriodsMap_(),
     blocks: Object.keys(BLOCKS).map(function (b) { return { name: b, category: BLOCKS[b].category, normal: BLOCKS[b].normal, statement: BLOCKS[b].statement }; }),
     industries: INDUSTRIES,
@@ -97,7 +129,7 @@ function saveVoucherCore_(p, s) {
     if (!no) {
       var period = v.date.slice(0, 7);
       var props = PropertiesService.getScriptProperties();
-      var key = 'SEQ_' + period.replace('-', '');
+      var key = 'SEQ_' + (CTX.company ? CTX.company.id + '_' : '') + period.replace('-', '');
       var next = nextVoucherNo_(all.map(function (l) { return l.no; }), period, props.getProperty(key));
       no = next.no;
       props.setProperty(key, String(next.seq));
@@ -567,38 +599,18 @@ HANDLERS.saveSettings = function (p, s) {
     }
     if (errors.length) throw new Error(errors.join('\n'));
     saveSettings_(st);
+    // 公司名稱同步到集團的公司清單
+    if (CTX.company && st.companyName !== CTX.company.name) {
+      var row = loadCompanies_().filter(function (c) { return c.id === CTX.company.id; })[0];
+      if (row) updateCells_(SHEETS.COMPANIES, row._row, { '公司名稱': st.companyName });
+      CTX.company.name = st.companyName;
+    }
     log_(s.username, '修改公司設定', st);
     return st;
   });
 };
 
 // ───────────── 帳號 ─────────────
-
-HANDLERS.listUsers = function () {
-  return loadUsers_().map(function (u) {
-    return { username: u.username, name: u.name, role: u.role, enabled: u.enabled, createdAt: u.createdAt, lastLogin: u.lastLogin };
-  });
-};
-
-HANDLERS.saveUser = function (p, s) {
-  return withLock_(function () {
-    if (ROLES.indexOf(p.role) < 0) throw new Error('角色不正確');
-    if (p.isNew) {
-      var pw = createUser_(p.username, p.name, p.role);
-      log_(s.username, '新增帳號', p.username + '（' + p.role + '）');
-      return { username: p.username, tempPassword: pw };
-    }
-    var u = findUser_(p.username);
-    if (!u) throw new Error('帳號不存在');
-    var admins = loadUsers_().filter(function (x) { return x.enabled && x.role === '管理者'; });
-    var losingAdmin = u.role === '管理者' && (p.role !== '管理者' || p.enabled === false);
-    if (losingAdmin && admins.length <= 1) throw new Error('至少要保留一位啟用中的管理者');
-    if (u.username === s.username && losingAdmin) throw new Error('不能取消自己的管理者權限');
-    updateCells_(SHEETS.USERS, u._row, { '姓名': str_(p.name) || u.name, '角色': p.role, '啟用': p.enabled === false ? '否' : '是' });
-    log_(s.username, '修改帳號', u.username + '：' + p.role + (p.enabled === false ? '（停用）' : ''));
-    return { username: u.username };
-  });
-};
 
 HANDLERS.resetPassword = function (p, s) {
   var u = findUser_(p.username);
@@ -618,12 +630,4 @@ HANDLERS.changePassword = function (p, s) {
   log_(s.username, '變更密碼', '');
   // 舊的登入（含其他裝置）全部失效，回傳新的登入憑證給目前這個畫面
   return issueSession_(findUser_(s.username));
-};
-
-HANDLERS.listLog = function (p) {
-  var rows = readObjects_(SHEETS.LOG);
-  var limit = Math.min(Number(p.limit) || 200, 1000);
-  return rows.slice(-limit).reverse().map(function (o) {
-    return { time: str_(o['時間']), user: str_(o['帳號']), action: str_(o['動作']), detail: str_(o['內容']) };
-  });
 };

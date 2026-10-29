@@ -103,6 +103,30 @@ async function idle(page) {
   await idle(page);
   const listText = await page.textContent('#vList');
   if (!listText.includes('二月網路費')) problems.push('新增的傳票沒有出現在清單');
+  // 套用範本：食材進貨－月結，輸入含稅 10500 → 未稅 10000、稅額 500
+  await page.click('#newV');
+  await page.selectOption('#edTpl', 'r-food-credit');
+  await page.fill('#edAmt', '10500');
+  await page.waitForTimeout(50);
+  const tplDiff = await page.textContent('#edDiff');
+  const tplHint = await page.textContent('#edTplHint');
+  if (!tplDiff.includes('借貸平衡') || !tplHint.includes('未稅 10,000')) problems.push('範本金額拆分不正確：' + tplDiff + ' / ' + tplHint);
+  await page.screenshot({ path: path.join(shots, 'flow-template.png') });
+  await page.click('#edSave');
+  await page.waitForSelector('#modal[hidden]', { state: 'attached' });
+  await idle(page);
+  // 切換公司
+  await page.selectOption('#coSwitch', 'C02');
+  await idle(page);
+  await page.waitForFunction(() => document.querySelector('#companyTitle').textContent.includes('鯉魚食品'));
+  await page.click('#nav a[data-page="group"]');
+  await idle(page);
+  await page.waitForTimeout(150);
+  const groupText = await page.textContent('#gOut');
+  if (!groupText.includes('合併') || !groupText.includes('鯉魚食品')) problems.push('集團報表沒有顯示兩家公司與合併欄');
+  await page.screenshot({ path: path.join(shots, 'flow-group-report.png'), fullPage: true });
+  await page.selectOption('#coSwitch', 'C01');
+  await idle(page);
   await page.click('#nav a[data-page="is"]');
   await idle(page);
   await page.selectOption('#isCmp', 'prev');

@@ -425,3 +425,52 @@ function dashboard_(accounts, opening, lines, today, fyStartMonth) {
     voucherCount: journal_(lines, monthStart_(period), monthEnd_(period)).length
   };
 }
+
+// ───────────── 集團合併 ─────────────
+
+/**
+ * 把多家公司的損益表或資產負債表並排，並加總成合併數
+ * items = [{ id, name, statement }]，statement 為 incomeStatement_ 或 balanceSheet_ 的結果（無資料可為 null）
+ * 科目以代碼對齊（系統計算列如「本期損益」以名稱對齊）；名稱取第一家公司的
+ * 注意：尚未沖銷公司間往來
+ */
+function mergeStatements_(items) {
+  var sections = {};
+  var order = [];
+  var summary = {};
+  items.forEach(function (it) {
+    var st = it.statement;
+    if (!st) return;
+    st.sections.forEach(function (sec) {
+      if (!sections[sec.block]) { sections[sec.block] = { block: sec.block, rows: {}, rowOrder: [], totals: {}, total: 0 }; order.push(sec.block); }
+      var S = sections[sec.block];
+      sec.rows.forEach(function (r) {
+        var key = r.code || ('#' + r.name);
+        if (!S.rows[key]) { S.rows[key] = { code: r.code, name: r.name, computed: !!r.computed, amounts: {}, total: 0 }; S.rowOrder.push(key); }
+        S.rows[key].amounts[it.id] = (S.rows[key].amounts[it.id] || 0) + r.amount;
+        S.rows[key].total += r.amount;
+      });
+      S.totals[it.id] = (S.totals[it.id] || 0) + sec.total;
+      S.total += sec.total;
+    });
+    Object.keys(st.summary).forEach(function (k) {
+      if (typeof st.summary[k] !== 'number') return;
+      if (!summary[k]) summary[k] = { total: 0 };
+      summary[k][it.id] = st.summary[k];
+      summary[k].total += st.summary[k];
+    });
+  });
+  return {
+    companies: items.map(function (it) { return { id: it.id, name: it.name, empty: !it.statement, note: it.note || '' }; }),
+    sections: order.map(function (b) {
+      var S = sections[b];
+      var keys = S.rowOrder.slice().sort(function (a, c) {
+        var ra = S.rows[a], rc = S.rows[c];
+        if (ra.computed !== rc.computed) return ra.computed ? 1 : -1;
+        return (ra.code || '') < (rc.code || '') ? -1 : (ra.code || '') > (rc.code || '') ? 1 : 0;
+      });
+      return { block: b, rows: keys.map(function (k) { return S.rows[k]; }), totals: S.totals, total: S.total };
+    }),
+    summary: summary
+  };
+}

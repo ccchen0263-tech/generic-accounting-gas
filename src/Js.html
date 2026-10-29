@@ -3,7 +3,9 @@
   'use strict';
 
   // ───────────── 狀態與工具 ─────────────
-  var S = { token: null, boot: null, page: 'home', acctMap: {} };
+  var S = { token: null, boot: null, page: 'home', acctMap: {}, companyId: null };
+  try { S.companyId = window.localStorage.getItem('acct_company'); } catch (e) { S.companyId = null; }
+  var CO_COLORS = ['#0f6e66', '#7a4bb3', '#b4541a', '#1f5fa8', '#8a6d00', '#a02c55'];
   var store = {
     get: function (k) { try { return window.sessionStorage.getItem(k); } catch (e) { return null; } },
     set: function (k, v) { try { window.sessionStorage.setItem(k, v); } catch (e) { /* 無法使用時只存在記憶體 */ } },
@@ -85,10 +87,13 @@
   }
   function call(action, payload) {
     busy(true);
-    return rpc('api', S.token, action, payload || {}).then(function (r) {
+    payload = Object.assign({}, payload || {});
+    if (S.companyId) payload._company = S.companyId;
+    return rpc('api', S.token, action, payload).then(function (r) {
       busy(false);
       if (!r.ok) {
         if (r.relogin) showLogin(r.error);
+        if (r.switchCompany) { S.companyId = null; store.del('acct_company'); start(); }
         throw new Error(r.error);
       }
       return r.data;
@@ -198,12 +203,15 @@
     { id: 'tb', title: '試算表', need: 'trialBalance' },
     { id: 'is', title: '損益表', need: 'incomeStatement' },
     { id: 'bs', title: '資產負債表', need: 'balanceSheet' },
-    { group: '設定' },
+    { group: '本公司設定' },
     { id: 'periods', title: '期間鎖帳', need: 'listPeriods' },
     { id: 'opening', title: '期初餘額', need: 'getOpening' },
     { id: 'accounts', title: '會計科目', need: 'listReference' },
     { id: 'settings', title: '公司設定', need: 'getSettings' },
-    { id: 'users', title: '帳號管理', need: 'listUsers' },
+    { group: '集團' },
+    { id: 'group', title: '集團報表', need: 'consolidated' },
+    { id: 'companies', title: '公司管理', need: 'listCompanies' },
+    { id: 'users', title: '帳號與權限', need: 'listUsers' },
     { id: 'log', title: '操作紀錄', need: 'listLog' },
     { group: '其他' },
     { id: 'help', title: '操作說明' },
@@ -214,11 +222,28 @@
     S.boot = b;
     S.acctMap = {};
     b.accounts.forEach(function (a) { S.acctMap[a.code] = a; });
-    $('#companyTitle').textContent = b.settings.companyName || b.app.name;
+    S.companyId = b.company.id;
+    try { window.localStorage.setItem('acct_company', S.companyId); } catch (e) { /* 忽略 */ }
+    var me = b.companies.filter(function (c) { return c.id === b.company.id; })[0] || { color: 0 };
+    document.documentElement.style.setProperty('--co', coColor(me.color));
+    $('#companyTitle').textContent = b.company.name || b.settings.companyName || b.app.name;
+    var multi = b.companies.length > 1;
+    $('#app').classList.toggle('multi', multi);
+    $('#coWrap').hidden = !multi;
+    $('#coSwitch').innerHTML = b.companies.map(function (c) {
+      return '<option value="' + esc(c.id) + '"' + (c.id === b.company.id ? ' selected' : '') + '>' + esc(c.name) + '</option>';
+    }).join('');
     $('#whoName').textContent = b.user.name || b.user.username;
-    $('#whoRole').textContent = b.user.role;
-    document.title = (b.settings.companyName ? b.settings.companyName + '｜' : '') + b.app.name;
+    $('#whoRole').textContent = (b.user.groupRole === '管理者' ? '集團管理者' : b.user.role);
+    document.title = b.company.name + '｜' + b.app.name;
   }
+  function coColor(i) { return CO_COLORS[(Number(i) || 0) % CO_COLORS.length]; }
+  function coName() { return S.boot ? S.boot.company.name : ''; }
+  $('#coSwitch').addEventListener('change', function () {
+    S.companyId = $('#coSwitch').value;
+    var page = S.page;
+    refreshBoot().then(function () { buildNav(); go(page); toast('已切換到 ' + coName()); }).catch(function (e) { toast(e.message, true); });
+  });
   function refreshBoot() { return call('bootstrap').then(applyBoot); }
 
   function buildNav() {
@@ -435,9 +460,14 @@
 
   function voucherEditor(v, onSaved, isCopy) {
     var editing = v && v.no && !isCopy;
-    var title = editing ? '修改傳票 ' + v.no : '新增傳票';
+    var title = (editing ? '修改傳票 ' + v.no : '新增傳票') + '｜' + coName();
+    var tpls = (!editing && S.boot.templates) ? S.boot.templates : [];
     var body = openModal(title,
       '<datalist id="acctList">' + acctOptions() + '</datalist>' +
+      (tpls.length ? '<div class="tpl-bar"><label class="grow">常用範本（選了會自動帶科目）<select id="edTpl"><option value="">（不套用，自己輸入）</option>' +
+        tpls.map(function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>'; }).join('') + '</select></label>' +
+        '<label class="field" id="edAmtWrap" hidden><span id="edAmtLabel">含稅金額</span><input id="edAmt" class="num" inputmode="numeric" placeholder="例如 10500"></label>' +
+        '<p class="muted small" id="edTplHint" style="flex-basis:100%;margin:0"></p></div>' : '') +
       '<div class="row"><label class="field">日期<input type="date" id="edDate" value="' + esc(v ? v.date : today()) + '"></label>' +
       '<label class="field">類型<select id="edType">' + S.boot.voucherTypes.map(function (t) { return '<option' + (v && v.type === t ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select></label>' +
       '<label class="grow">摘要<input id="edMemo" value="' + esc(v ? v.memo : '') + '" placeholder="例如：一月份店租"></label></div>' +
@@ -450,6 +480,8 @@
       l = l || {};
       var row = document.createElement('div');
       row.className = 'line';
+      row.setAttribute('data-part', l.part || '');
+      row.setAttribute('data-side', l.side || '');
       row.innerHTML = '<div class="acct"><input list="acctList" class="l-acct" aria-label="科目" placeholder="輸入代碼或名稱" value="' + esc(l.code ? acctLabel(l.code) : '') + '"><div class="acct-name"></div></div>' +
         '<input class="l-dr num" inputmode="numeric" aria-label="借方" placeholder="借方" value="' + (l.debit ? l.debit : '') + '">' +
         '<input class="l-cr num" inputmode="numeric" aria-label="貸方" placeholder="貸方" value="' + (l.credit ? l.credit : '') + '">' +
@@ -496,6 +528,42 @@
       $('.l-acct', row).focus();
       totals();
     };
+    // 套用範本
+    var tplSel = $('#edTpl', body);
+    var currentTpl = null;
+    function fillAmounts() {
+      if (!currentTpl || currentTpl.amountMode === 'manual') return;
+      var total = amt($('#edAmt', body).value);
+      if (isNaN(total)) return;
+      var net = currentTpl.amountMode === 'tax' ? Math.round(total / 1.05) : total;
+      var tax = currentTpl.amountMode === 'tax' ? total - net : 0;
+      $all('.line:not(.head)', linesEl).forEach(function (row) {
+        var part = row.getAttribute('data-part'), side = row.getAttribute('data-side');
+        if (!part) return;
+        var val = part === 'total' ? total : part === 'net' ? net : tax;
+        $('.l-dr', row).value = side === 'D' && val ? val : '';
+        $('.l-cr', row).value = side === 'C' && val ? val : '';
+      });
+      $('#edTplHint', body).textContent = currentTpl.amountMode === 'tax' && total ? '未稅 ' + fmt(net) + '，稅額 ' + fmt(tax) + '（5%）' : '';
+      totals();
+    }
+    if (tplSel) {
+      tplSel.onchange = function () {
+        currentTpl = tpls.filter(function (t) { return t.id === tplSel.value; })[0] || null;
+        $('#edAmtWrap', body).hidden = !currentTpl || currentTpl.amountMode === 'manual';
+        $('#edTplHint', body).textContent = currentTpl && currentTpl.amountMode === 'manual' ? '這個範本的金額請在下方各行自己填。' : '';
+        if (!currentTpl) return;
+        $('#edAmtLabel', body).textContent = currentTpl.amountMode === 'tax' ? '含稅金額' : '金額';
+        $('#edType', body).value = currentTpl.type;
+        $('#edMemo', body).value = currentTpl.memo;
+        $all('.line:not(.head)', linesEl).forEach(function (row) { row.remove(); });
+        currentTpl.lines.forEach(function (l) { addLine({ code: l.code, part: l.part, side: l.side }); });
+        fillAmounts();
+        var a = $('#edAmt', body);
+        if (!$('#edAmtWrap', body).hidden) a.focus();
+      };
+      $('#edAmt', body).addEventListener('input', fillAmounts);
+    }
     $('#edCancel', body).onclick = closeModal;
     $('#edSave', body).onclick = function () {
       var lines = collect().filter(function (l) { return l.code || l.debit || l.credit; });
@@ -954,23 +1022,30 @@
     });
   };
 
-  // ── 帳號管理 ──
+  // ── 帳號與權限（集團管理者） ──
   RENDER.users = function (el, main) {
     var bar = setHeadActions(main, '<button class="btn primary" type="button" id="uNew">＋ 新增帳號</button>');
+    var data = null;
     $('#uNew', bar).onclick = function () { userForm(null); };
+    function accessText(u) {
+      if (u.groupRole === '管理者') return '<span class="badge open">集團管理者（所有公司）</span>';
+      if (!u.access.length) return '<span class="muted">未指派公司</span>';
+      return u.access.map(function (a) { return esc(a.companyName) + '：' + esc(a.role); }).join('<br>');
+    }
     function load() {
-      return call('listUsers').then(function (list) {
-        el.innerHTML = '<div class="notice info">角色說明：管理者＝全部功能；會計＝記帳、報表、盤點、鎖帳（不能改科目、公司設定、帳號，不能解鎖）；助理＝只能查看傳票與日記簿（第二期開放上傳單據）。</div>' +
-          '<div class="card"><div class="table-wrap"><table><thead><tr><th>帳號</th><th>姓名</th><th>角色</th><th>狀態</th><th>最後登入</th><th></th></tr></thead><tbody>' +
-          list.map(function (u) {
-            return '<tr><td class="code">' + esc(u.username) + '</td><td>' + esc(u.name) + '</td><td>' + esc(u.role) + '</td><td>' + (u.enabled ? '<span class="badge open">啟用</span>' : '<span class="badge lock">停用</span>') + '</td><td class="small muted">' + esc(u.lastLogin) + '</td>' +
+      return call('listUsers').then(function (d) {
+        data = d;
+        el.innerHTML = '<div class="notice info">集團管理者可以進入所有公司並管理公司與帳號。一般成員要逐家公司指派角色：管理者＝該公司全部功能；會計＝記帳、報表、盤點、鎖帳；助理＝只能查看傳票與日記簿。</div>' +
+          '<div class="card"><div class="table-wrap"><table><thead><tr><th>帳號</th><th>姓名</th><th>公司權限</th><th>狀態</th><th>最後登入</th><th></th></tr></thead><tbody>' +
+          d.users.map(function (u) {
+            return '<tr><td class="code">' + esc(u.username) + '</td><td>' + esc(u.name) + '</td><td class="small">' + accessText(u) + '</td><td>' + (u.enabled ? '<span class="badge open">啟用</span>' : '<span class="badge lock">停用</span>') + '</td><td class="small muted">' + esc(u.lastLogin) + '</td>' +
               '<td class="actions"><button class="btn small" type="button" data-edit="' + esc(u.username) + '">編輯</button> <button class="btn small" type="button" data-reset="' + esc(u.username) + '">重設密碼</button></td></tr>';
           }).join('') + '</tbody></table></div></div>';
-        $all('[data-edit]', el).forEach(function (b) { b.onclick = function () { userForm(list.filter(function (u) { return u.username === b.getAttribute('data-edit'); })[0]); }; });
+        $all('[data-edit]', el).forEach(function (b) { b.onclick = function () { userForm(d.users.filter(function (u) { return u.username === b.getAttribute('data-edit'); })[0]); }; });
         $all('[data-reset]', el).forEach(function (b) {
           b.onclick = function () {
             var u = b.getAttribute('data-reset');
-            ask('重設密碼', '確定要重設 ' + u + ' 的密碼？系統會產生新的臨時密碼。', { okText: '重設' }).then(function (ok) {
+            ask('重設密碼', '確定要重設 ' + u + ' 的密碼？系統會產生新的臨時密碼，對方原本的登入會全部失效。', { okText: '重設' }).then(function (ok) {
               if (!ok) return;
               call('resetPassword', { username: u }).then(function (r) { showTempPassword(r.username, r.tempPassword); }).catch(function (e) { toast(e.message, true); });
             });
@@ -980,16 +1055,27 @@
     }
     function userForm(u) {
       var isNew = !u;
-      u = u || { username: '', name: '', role: '會計', enabled: true };
+      u = u || { username: '', name: '', groupRole: '成員', enabled: true, access: [] };
+      var roleOf = {};
+      u.access.forEach(function (a) { roleOf[a.companyId] = a.role; });
       var body = openModal(isNew ? '新增帳號' : '編輯帳號 ' + u.username,
         '<label>帳號（英數字）<input id="ufUser" value="' + esc(u.username) + '"' + (isNew ? '' : ' disabled') + ' autocomplete="off"></label>' +
         '<label style="margin-top:10px">姓名<input id="ufName" value="' + esc(u.name) + '"></label>' +
-        '<label style="margin-top:10px">角色<select id="ufRole">' + S.boot.roles.map(function (r) { return '<option' + (u.role === r ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select></label>' +
+        '<label style="margin-top:10px">身分<select id="ufGroup"><option value="成員"' + (u.groupRole === '成員' ? ' selected' : '') + '>一般成員（逐家公司指派）</option><option value="管理者"' + (u.groupRole === '管理者' ? ' selected' : '') + '>集團管理者（所有公司）</option></select></label>' +
+        '<div id="ufAccess" style="margin-top:12px"><div class="muted small">各公司角色</div><div class="access-grid">' +
+        data.companies.map(function (c) {
+          return '<span>' + esc(c.name) + '</span><select data-co="' + esc(c.id) + '" aria-label="' + esc(c.name) + ' 角色"><option value="">無權限</option>' +
+            S.boot.roles.map(function (r) { return '<option' + (roleOf[c.id] === r ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select>';
+        }).join('') + '</div></div>' +
         (isNew ? '' : '<label class="check" style="margin-top:12px"><input type="checkbox" id="ufOn"' + (u.enabled ? ' checked' : '') + '> 啟用</label>') +
         '<p class="error-text" id="ufErr" role="alert"></p><div class="modal-foot"><button class="btn" type="button" id="ufCancel">取消</button><button class="btn primary" type="button" id="ufSave">儲存</button></div>', { narrow: true });
+      var sync = function () { $('#ufAccess', body).hidden = $('#ufGroup', body).value === '管理者'; };
+      $('#ufGroup', body).onchange = sync;
+      sync();
       $('#ufCancel', body).onclick = closeModal;
       $('#ufSave', body).onclick = function () {
-        var p = { isNew: isNew, username: $('#ufUser', body).value.trim(), name: $('#ufName', body).value.trim(), role: $('#ufRole', body).value, enabled: isNew ? true : $('#ufOn', body).checked };
+        var access = $all('[data-co]', body).filter(function (x) { return x.value; }).map(function (x) { return { companyId: x.getAttribute('data-co'), role: x.value }; });
+        var p = { isNew: isNew, username: $('#ufUser', body).value.trim(), name: $('#ufName', body).value.trim(), groupRole: $('#ufGroup', body).value, access: access, enabled: isNew ? true : $('#ufOn', body).checked };
         call('saveUser', p).then(function (r) {
           closeModal();
           if (r.tempPassword) showTempPassword(r.username, r.tempPassword); else toast('已儲存 ' + r.username);
@@ -1000,11 +1086,116 @@
     return load();
   };
 
+  // ── 公司管理（集團管理者） ──
+  RENDER.companies = function (el, main) {
+    var bar = setHeadActions(main, '<button class="btn primary" type="button" id="cNew">＋ 新增公司</button>');
+    $('#cNew', bar).onclick = function () { companyForm(); };
+    function load() {
+      return call('listCompanies').then(function (list) {
+        el.innerHTML = '<div class="notice info">每家公司各自一份試算表，帳務完全分開；登入帳號與權限統一在這裡管理。新增公司時系統會自動建立試算表，並依產業帶入建議科目。</div>' +
+          '<div class="card"><div class="table-wrap"><table><thead><tr><th>代碼</th><th>公司名稱</th><th>試算表</th><th>狀態</th><th></th></tr></thead><tbody>' +
+          list.map(function (c) {
+            return '<tr><td class="code">' + esc(c.id) + '</td><td>' + esc(c.name) + (c.isHub ? ' <span class="badge auto">集團主檔</span>' : '') + '</td>' +
+              '<td><a href="' + esc(c.url) + '" target="_blank" rel="noopener">開啟</a></td>' +
+              '<td>' + (c.enabled ? '<span class="badge open">啟用</span>' : '<span class="badge lock">停用</span>') + '</td>' +
+              '<td class="actions"><button class="btn small" type="button" data-ren="' + esc(c.id) + '">改名</button> <button class="btn small" type="button" data-tog="' + esc(c.id) + '">' + (c.enabled ? '停用' : '啟用') + '</button></td></tr>';
+          }).join('') + '</tbody></table></div></div>';
+        $all('[data-ren]', el).forEach(function (b) {
+          b.onclick = function () {
+            var c = list.filter(function (x) { return x.id === b.getAttribute('data-ren'); })[0];
+            ask('公司改名', '目前名稱：' + c.name, { input: '新的公司名稱', okText: '儲存' }).then(function (name) {
+              if (!name) return;
+              call('saveCompany', { id: c.id, name: name, enabled: c.enabled }).then(function () { toast('已改名'); return refreshBoot().then(load); }).catch(function (e) { toast(e.message, true); });
+            });
+          };
+        });
+        $all('[data-tog]', el).forEach(function (b) {
+          b.onclick = function () {
+            var c = list.filter(function (x) { return x.id === b.getAttribute('data-tog'); })[0];
+            var msg = c.enabled ? '停用後所有人都不能切換進這家公司，資料仍保留在試算表。' : '重新啟用這家公司。';
+            ask((c.enabled ? '停用 ' : '啟用 ') + c.name, msg, { okText: c.enabled ? '停用' : '啟用', danger: c.enabled }).then(function (ok) {
+              if (!ok) return;
+              call('saveCompany', { id: c.id, name: c.name, enabled: !c.enabled }).then(function () { return refreshBoot().then(function () { buildNav(); load(); }); }).catch(function (e) { toast(e.message, true); });
+            });
+          };
+        });
+      });
+    }
+    function companyForm() {
+      var body = openModal('新增公司',
+        '<label>公司名稱<input id="cfName" placeholder="例如：鯉魚食品有限公司"></label>' +
+        '<label style="margin-top:10px">統一編號（選填）<input id="cfTax" inputmode="numeric" maxlength="8"></label>' +
+        '<div style="margin-top:12px"><div class="muted small">產業類別（決定建議科目與傳票範本，可複選）</div><div style="margin-top:6px">' +
+        S.boot.industries.filter(function (i) { return i !== '通用'; }).map(function (i) { return '<label class="check"><input type="checkbox" class="cf-ind" value="' + i + '"> ' + i + '</label>'; }).join('') + '</div></div>' +
+        '<label style="margin-top:10px">營業稅類型<select id="cfVat"><option>一般稅額</option><option>小規模</option></select></label>' +
+        '<p class="muted small">建立後請切換到這家公司，到「公司設定」填開帳日，再輸入期初餘額。</p>' +
+        '<p class="error-text" id="cfErr" role="alert"></p><div class="modal-foot"><button class="btn" type="button" id="cfCancel">取消</button><button class="btn primary" type="button" id="cfSave">建立公司</button></div>', { narrow: true });
+      $('#cfCancel', body).onclick = closeModal;
+      $('#cfSave', body).onclick = function () {
+        var p = { name: $('#cfName', body).value.trim(), taxId: $('#cfTax', body).value.trim(), vatType: $('#cfVat', body).value, industries: $all('.cf-ind:checked', body).map(function (c) { return c.value; }) };
+        $('#cfErr', body).textContent = '';
+        call('createCompany', p).then(function (r) {
+          closeModal();
+          toast('已建立 ' + r.name + '，可在右上角切換');
+          return refreshBoot().then(function () { buildNav(); load(); });
+        }).catch(function (e) { $('#cfErr', body).textContent = e.message; });
+      };
+    }
+    return load();
+  };
+
+  // ── 集團報表 ──
+  RENDER.group = function (el, main) {
+    var type = 'is';
+    el.innerHTML = '<div class="chips" style="margin-bottom:12px" role="tablist"><button class="chip on" type="button" data-t="is">損益表</button><button class="chip" type="button" data-t="bs">資產負債表</button></div><div id="gCtl"></div><div id="gOut"></div>';
+    setHeadActions(main, '<button class="btn" type="button" id="gPrint">列印</button>');
+    $('#gPrint').onclick = function () { window.print(); };
+    $all('[data-t]', el).forEach(function (b) {
+      b.onclick = function () { type = b.getAttribute('data-t'); $all('[data-t]', el).forEach(function (x) { x.classList.toggle('on', x === b); }); draw(); };
+    });
+    function draw() {
+      var ctl = $('#gCtl');
+      if (type === 'is') rangeControls(ctl, quickRange('thisMonth'), run);
+      else rangeControls(ctl, { asOf: today() }, run, { asOf: true });
+    }
+    function run(p) {
+      p.type = type;
+      call('consolidated', p).then(function (r) {
+        var cos = r.companies;
+        var head = '<tr><th>項目</th>' + cos.map(function (c) { return '<th class="num">' + esc(c.name) + '</th>'; }).join('') + '<th class="num">合併</th></tr>';
+        var cell = function (m, total) { return cos.map(function (c) { return '<td class="num">' + (c.empty ? '<span class="muted">—</span>' : money(m[c.id] || 0)) + '</td>'; }).join('') + '<td class="num"><b>' + money(total) + '</b></td>'; };
+        var sm = r.summary;
+        var sumRow = function (label, key, cls) { var m = sm[key] || { total: 0 }; return '<tr class="' + (cls || 'subtotal') + '"><td>' + label + '</td>' + cell(m, m.total) + '</tr>'; };
+        var rows = '';
+        var after = r.type === 'is'
+          ? { '營業成本': ['營業毛利', 'grossProfit'], '營業費用': ['營業淨利', 'operatingIncome'], '營業外支出': ['稅前淨利', 'pretaxIncome'], '所得稅費用': ['本期淨利', 'netIncome', 'total'] }
+          : { '非流動資產': ['資產總計', 'assets', 'total'], '非流動負債': ['負債總計', 'liabilities'], '權益': ['負債及權益總計', 'liabilitiesAndEquity', 'total'] };
+        r.sections.forEach(function (sec) {
+          if (sec.rows.length || sec.block === '營業收入') {
+            rows += '<tr class="section"><td colspan="' + (cos.length + 2) + '">' + esc(sec.block) + '</td></tr>' +
+              sec.rows.map(function (x) { return '<tr><td class="indent">' + (x.code ? '<span class="code">' + esc(x.code) + '</span> ' : '') + esc(x.name) + '</td>' + cell(x.amounts, x.total) + '</tr>'; }).join('') +
+              '<tr class="subtotal"><td>' + esc(sec.block) + '合計</td>' + cell(sec.totals, sec.total) + '</tr>';
+          }
+          var a = after[sec.block];
+          if (a) rows += sumRow(a[0], a[1], a[2]);
+        });
+        var notes = cos.filter(function (c) { return c.empty; }).map(function (c) { return c.name + '：' + c.note; });
+        var range = r.type === 'is' ? (p.from + ' ～ ' + p.to) : ('截至 ' + p.asOf);
+        $('#gOut').innerHTML = (notes.length ? '<div class="notice warn">' + esc(notes.join('；')) + '</div>' : '') +
+          (r.type === 'bs' && sm.difference && sm.difference.total ? '<div class="notice bad">合併後資產與負債＋權益相差 ' + fmt(sm.difference.total) + '，請檢查各公司期初餘額。</div>' : '') +
+          '<div class="card"><div class="report-title"><div class="co">集團' + (r.type === 'is' ? '損益表' : '資產負債表') + '</div><div class="rng">' + esc(range) + '</div></div>' +
+          '<div class="table-wrap"><table><thead>' + head + '</thead><tbody>' + rows + '</tbody></table></div>' +
+          '<p class="muted small">合併欄為各公司直接加總，尚未沖銷公司間往來（例如鯉魚食品賣給鯉魚餐飲的貨款），合併營收與往來科目可能重複計算。</p></div>';
+      }).catch(function (e) { $('#gOut').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    }
+    draw();
+  };
+
   // ── 操作紀錄 ──
   RENDER.log = function (el) {
     return call('listLog', { limit: 300 }).then(function (list) {
-      el.innerHTML = '<div class="card"><p class="muted small">最近 300 筆</p><div class="table-wrap"><table><thead><tr><th>時間</th><th>帳號</th><th>動作</th><th>內容</th></tr></thead><tbody>' +
-        list.map(function (x) { return '<tr><td class="small" style="white-space:nowrap">' + esc(x.time) + '</td><td>' + esc(x.user) + '</td><td style="white-space:nowrap">' + esc(x.action) + '</td><td class="small">' + esc(x.detail) + '</td></tr>'; }).join('') +
+      el.innerHTML = '<div class="card"><p class="muted small">最近 300 筆</p><div class="table-wrap"><table><thead><tr><th>時間</th><th>公司</th><th>帳號</th><th>動作</th><th>內容</th></tr></thead><tbody>' +
+        list.map(function (x) { return '<tr><td class="small" style="white-space:nowrap">' + esc(x.time) + '</td><td class="small">' + esc(x.company) + '</td><td>' + esc(x.user) + '</td><td style="white-space:nowrap">' + esc(x.action) + '</td><td class="small">' + esc(x.detail) + '</td></tr>'; }).join('') +
         '</tbody></table></div></div>';
     });
   };
@@ -1037,7 +1228,8 @@
       h += '<h3 style="margin-top:0">您可以做的事</h3><ul><li>「傳票」：選月份查看傳票，點一張傳票展開分錄。</li><li>「日記簿」：依日期區間查看所有分錄。</li><li>「變更密碼」：第一次登入請先改成自己的密碼。</li></ul><p class="muted">第二期會開放上傳發票、收據照片，由系統自動辨識。</p>';
     } else {
       h += '<h3 style="margin-top:0">每天／每週：記傳票</h3><ol>' +
-        '<li>到「傳票」按「＋ 新增傳票」。</li><li>選日期、類型（收入／支出／轉帳），填摘要。</li>' +
+        '<li>先看右上角是不是要記帳的那家公司（多家公司時可在右上角切換，頂端色條顏色代表公司）。</li>' +
+        '<li>到「傳票」按「＋ 新增傳票」。常見交易先選「常用範本」，有營業稅的範本只要輸入含稅金額，系統自動拆未稅與 5% 稅額。</li><li>沒有合適範本時：選日期、類型（收入／支出／轉帳），填摘要。</li>' +
         '<li>每一行選科目（可輸入代碼或名稱），填借方或貸方金額。按「＋ 加一行」會自動帶入差額。</li>' +
         '<li>借方合計等於貸方合計才能儲存。</li></ol>' +
         '<p class="muted small">常見分錄：營收入帳＝借 銀行存款／貸 餐飲收入、貸 銷項稅額；食材進貨＝借 食材及飲料進貨、借 進項稅額／貸 銀行存款或應付帳款；店租＝借 租金支出／貸 銀行存款。</p>' +
@@ -1046,10 +1238,15 @@
         '<li>看「損益表」「資產負債表」，確認數字合理；可按「寫入試算表」把報表存到試算表分頁。</li>' +
         '<li>「期間鎖帳」：確認無誤後鎖帳，該月就不能再修改。</li></ol>' +
         '<h3>傳票寫錯怎麼辦</h3><ul><li>未鎖帳：展開傳票按「修改」或「作廢」（作廢需填原因，號碼不重複使用）。</li><li>已鎖帳：在本月新增一張調整傳票，摘要註明原傳票號碼。需要改舊帳時請管理者解鎖。</li></ul>';
+      if (S.boot.user.groupRole === '管理者') {
+        h += '<h3>集團管理者</h3><ul><li>「公司管理」：新增公司（自動建立該公司的試算表與建議科目）、改名、停用。</li>' +
+          '<li>「帳號與權限」：每個人可以設定在每家公司的角色，例如在鯉魚餐飲是會計、在鯉魚食品是助理。</li>' +
+          '<li>「集團報表」：損益表、資產負債表每家公司一欄，最後一欄是合併數（尚未沖銷公司間往來）。</li></ul>';
+      }
       if (role === '管理者') {
         h += '<h3>管理者第一次設定</h3><ol><li>「公司設定」：公司名稱、產業類別、營業稅類型、開帳日。</li><li>「會計科目」→「科目參考庫」→「依公司產業一次加入建議科目」，再停用用不到的、新增自訂科目。</li>' +
-          '<li>「期初餘額」：輸入開帳日當天的資產、負債、權益餘額（借貸要平衡）。</li><li>「帳號管理」：幫會計、助理開帳號，臨時密碼只顯示一次。</li></ol>' +
-          '<h3>忘記密碼</h3><ul><li>其他人忘記：在「帳號管理」按「重設密碼」。</li><li>管理者自己忘記：打開試算表 → 上方選單「公版會計系統」→「重設 admin 密碼」。</li></ul>';
+          '<li>「期初餘額」：輸入開帳日當天的資產、負債、權益餘額（借貸要平衡）。</li><li>「帳號與權限」（集團管理者）：幫會計、助理開帳號並指派公司，臨時密碼只顯示一次。</li></ol>' +
+          '<h3>忘記密碼</h3><ul><li>其他人忘記：集團管理者在「帳號與權限」按「重設密碼」。</li><li>管理者自己忘記：打開試算表 → 上方選單「公版會計系統」→「重設 admin 密碼」。</li></ul>';
       }
     }
     h += '</div>';

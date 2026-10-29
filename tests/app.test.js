@@ -413,3 +413,128 @@ test('忘記密碼被鎖住後，重設 admin 密碼即可馬上登入', () => {
   const pw = /臨時密碼：(\S+)/.exec(app.__logs.join('\n'))[1];
   assert.equal(app.login('admin', pw, 'mybrowser').ok, true);
 });
+
+// ───────────── 第 0.2 版：多公司、集團報表、傳票範本 ─────────────
+
+function groupBooks() {
+  const ctx = restaurantBooks(); // C01 鯉魚餐飲（集團主檔本身）
+  const { app, token } = ctx;
+  const callAt = (company, action, payload) => {
+    const r = app.api(token, action, Object.assign({ _company: company }, payload || {}));
+    if (!r.ok) throw new Error(r.error);
+    return r.data;
+  };
+  const food = callAt('C01', 'createCompany', { name: '鯉魚食品有限公司', industries: ['食品製造', '食品買賣'] });
+  callAt(food.id, 'saveSettings', { companyName: '鯉魚食品有限公司', industries: ['食品製造', '食品買賣'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' });
+  callAt(food.id, 'saveOpening', { rows: [{ code: '1113', debit: 300000 }, { code: '3111', credit: 300000 }] });
+  callAt(food.id, 'saveVoucher', { date: '2026-01-10', type: '轉帳', memo: '自製產品銷貨', lines: [{ code: '1141', debit: 52500 }, { code: '4111', credit: 50000 }, { code: '2161', credit: 2500 }] });
+  callAt(food.id, 'saveVoucher', { date: '2026-01-12', type: '轉帳', memo: '原料進貨', lines: [{ code: '5131', debit: 20000 }, { code: '1191', debit: 1000 }, { code: '2131', credit: 21000 }] });
+  return Object.assign(ctx, { callAt, food });
+}
+
+test('多公司：setup 把原本的試算表登記為第一家公司，舊帳號自動升級', () => {
+  const { app, call } = restaurantBooks();
+  call('saveUser', { isNew: true, username: 'acct', name: '會計', role: '會計' });
+  const companies = app.loadCompanies_();
+  assert.equal(companies.length, 1);
+  assert.equal(companies[0].id, 'C01');
+  assert.equal(companies[0].spreadsheetId, 'fake-spreadsheet-id');
+  const b = call('bootstrap');
+  assert.equal(b.company.name, '鯉魚餐飲有限公司'); // 公司設定改名時同步到公司清單
+  const users = call('listUsers').users;
+  assert.equal(users.find((u) => u.username === 'acct').access[0].role, '會計');
+});
+
+test('多公司：新增公司會建立獨立試算表，帳務完全分開', () => {
+  const { app, callAt, food } = groupBooks();
+  assert.equal(food.id, 'C02');
+  const foodSs = app.__registry['fake-ss-1'];
+  assert.ok(foodSs.getSheetByName('傳票'));
+  assert.ok(!foodSs.getSheetByName('工作表1'), '新試算表的空白工作表要移除');
+  assert.ok(!foodSs.getSheetByName('_帳號'), '帳號只放在集團主檔');
+  const foodBoot = callAt('C02', 'bootstrap');
+  assert.equal(foodBoot.company.name, '鯉魚食品有限公司');
+  assert.ok(foodBoot.accounts.some((a) => a.code === '5131'), '依產業自動帶入食品科目');
+  assert.ok(!foodBoot.accounts.some((a) => a.code === '1166'), '不帶入餐飲專用科目');
+  assert.equal(callAt('C02', 'listVouchers', { period: '2026-01' }).vouchers.length, 2);
+  assert.equal(callAt('C01', 'listVouchers', { period: '2026-01' }).vouchers.length, 3);
+  // 兩家公司的傳票號碼各自從 0001 開始
+  assert.equal(callAt('C02', 'listVouchers', { period: '2026-01' }).vouchers.at(-1).no, '202601-0001');
+  assert.equal(callAt('C02', 'incomeStatement', { from: '2026-01-01', to: '2026-01-31' }).current.summary.revenue, 50000);
+});
+
+test('多公司：依公司給不同角色；沒權限的公司看不到也寫不進去', () => {
+  const { app, callAt } = groupBooks();
+  const r = callAt('C01', 'saveUser', { isNew: true, username: 'wang', name: '王會計', groupRole: '成員', access: [{ companyId: 'C01', role: '會計' }, { companyId: 'C02', role: '助理' }] });
+  const only = callAt('C01', 'saveUser', { isNew: true, username: 'lee', name: '李助理', groupRole: '成員', access: [{ companyId: 'C02', role: '助理' }] });
+  const wt = app.login('wang', r.tempPassword).data.token;
+  const b = app.api(wt, 'bootstrap', { _company: 'C02' }).data;
+  assert.deepEqual(plain(b.companies.map((c) => c.id + c.role)), ['C01會計', 'C02助理']);
+  assert.equal(b.user.role, '助理');
+  assert.match(app.api(wt, 'trialBalance', { _company: 'C02' }).error, /權限/);
+  assert.equal(app.api(wt, 'trialBalance', { _company: 'C01', from: '2026-01-01', to: '2026-01-31' }).ok, true);
+  assert.match(app.api(wt, 'listUsers', { _company: 'C01' }).error, /集團管理者/);
+  const lt = app.login('lee', only.tempPassword).data.token;
+  const lb = app.api(lt, 'bootstrap', {}).data;
+  assert.deepEqual(plain(lb.companies.map((c) => c.id)), ['C02']);
+  const denied = app.api(lt, 'listVouchers', { _company: 'C01' });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.switchCompany, true);
+  assert.throws(() => callAt('C01', 'saveUser', { isNew: true, username: 'nobody', name: 'x', groupRole: '成員', access: [] }), /至少要指派/);
+});
+
+test('多公司：停用公司後就不能切換進去，至少保留一家', () => {
+  const { callAt } = groupBooks();
+  callAt('C01', 'saveCompany', { id: 'C02', enabled: false });
+  assert.deepEqual(plain(callAt('C01', 'bootstrap').companies.map((c) => c.id)), ['C01']);
+  assert.throws(() => callAt('C01', 'saveCompany', { id: 'C01', enabled: false }), /至少要保留/);
+  callAt('C01', 'saveCompany', { id: 'C02', enabled: true, name: '鯉魚食品股份有限公司' });
+  assert.equal(callAt('C02', 'bootstrap').settings.companyName, '鯉魚食品股份有限公司');
+});
+
+test('集團報表：每家公司單獨一欄＋合併欄', () => {
+  const { callAt } = groupBooks();
+  const is = callAt('C01', 'consolidated', { type: 'is', from: '2026-01-01', to: '2026-01-31' });
+  assert.deepEqual(plain(is.companies.map((c) => c.id)), ['C01', 'C02']);
+  assert.equal(is.summary.revenue.C01, 100000);
+  assert.equal(is.summary.revenue.C02, 50000);
+  assert.equal(is.summary.revenue.total, 150000);
+  assert.equal(is.summary.netIncome.total, 30000 + 30000);
+  const rev = is.sections.find((s) => s.block === '營業收入');
+  assert.equal(rev.rows.find((r) => r.code === '4111').amounts.C02, 50000);
+  const bs = callAt('C01', 'consolidated', { type: 'bs', asOf: '2026-01-31' });
+  assert.equal(bs.summary.assets.total, bs.summary.liabilitiesAndEquity.total);
+  assert.equal(bs.summary.difference.total, 0);
+  // 只有一家公司權限的人看不到集團報表
+  const { app } = groupBooks();
+  const r = app.api(app.login('admin', /臨時密碼：(\S+)/.exec(app.__logs.join('\n'))[1]).data.token, 'bootstrap', {});
+  assert.ok(r.data.allowed.includes('consolidated'));
+});
+
+test('傳票範本：依產業顯示，含稅金額自動拆未稅與 5% 稅額', () => {
+  const { app, callAt } = groupBooks();
+  const rest = callAt('C01', 'bootstrap').templates.map((t) => t.id);
+  assert.ok(rest.includes('r-cash') && rest.includes('r-food-credit') && rest.includes('g-pay-ap'));
+  assert.ok(!rest.includes('f-raw'), '餐飲公司不顯示食品範本');
+  const food = callAt('C02', 'bootstrap').templates;
+  const ids = food.map((t) => t.id);
+  assert.ok(ids.includes('f-raw') && ids.includes('f-goods') && ids.includes('f-ec-pay'));
+  assert.ok(!ids.includes('r-cash'));
+  const tpl = food.find((t) => t.id === 'f-raw');
+  assert.equal(tpl.amountMode, 'tax');
+  const lines = app.applyTemplate_(tpl, 10500);
+  assert.deepEqual(JSON.parse(JSON.stringify(lines)), [
+    { code: '5131', debit: 10000, credit: 0 }, { code: '1191', debit: 500, credit: 0 }, { code: '2131', debit: 0, credit: 10500 }
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(app.splitTax_(1000))), { net: 952, tax: 48 });
+  const v = callAt('C02', 'saveVoucher', { date: '2026-01-20', type: tpl.type, memo: tpl.memo, lines: app.applyTemplate_(tpl, 1000) });
+  assert.ok(v.no);
+  // 每個範本的科目都在參考庫裡，借貸方向合理
+  const refs = app.indexAccounts_(app.referenceAccountObjects_());
+  app.VOUCHER_TEMPLATES.forEach((t) => {
+    t.lines.forEach((l) => assert.ok(refs[l[0]], t.id + ' 科目 ' + l[0]));
+    const ap = app.applyTemplate_(app.templatesFor_(['餐飲', '食品製造', '食品買賣'], app.referenceAccountObjects_().map((a) => Object.assign(a, { enabled: true }))).find((x) => x.id === t.id) || { amountMode: 'manual', lines: [] }, 1050);
+    const dr = ap.reduce((s, x) => s + x.debit, 0), cr = ap.reduce((s, x) => s + x.credit, 0);
+    assert.equal(dr, cr, t.id + ' 借貸不平衡');
+  });
+});

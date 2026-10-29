@@ -1,7 +1,14 @@
 /**
  * 試算表讀寫層：所有工作表存取都集中在這裡
  */
-function ss_() {
+/**
+ * 目前這次操作所屬的公司（由 api() 依登入者與切換的公司設定）
+ * company = { id, name, spreadsheetId }；null 代表集團主檔本身
+ */
+var CTX = { company: null, ssCache: {} };
+
+/** 集團主檔：程式綁定的那份試算表 */
+function hubSs_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (ss) return ss;
   var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
@@ -9,8 +16,17 @@ function ss_() {
   return SpreadsheetApp.openById(id);
 }
 
+/** 目前公司的試算表 */
+function ss_() {
+  var c = CTX.company;
+  var hub = hubSs_();
+  if (!c || c.spreadsheetId === hub.getId()) return hub;
+  if (!CTX.ssCache[c.spreadsheetId]) CTX.ssCache[c.spreadsheetId] = SpreadsheetApp.openById(c.spreadsheetId);
+  return CTX.ssCache[c.spreadsheetId];
+}
+
 function sheet_(name) {
-  var sh = ss_().getSheetByName(name);
+  var sh = (HUB_SHEETS.indexOf(name) >= 0 ? hubSs_() : ss_()).getSheetByName(name);
   if (!sh) throw new Error('找不到工作表「' + name + '」，請先執行初始設定');
   return sh;
 }
@@ -234,7 +250,7 @@ function lockedPeriodsMap_() {
 
 function log_(user, action, detail) {
   try {
-    appendObjects_(SHEETS.LOG, [{ '時間': nowText_(), '帳號': user || '', '動作': action, '內容': typeof detail === 'string' ? detail : JSON.stringify(detail) }]);
+    appendObjects_(SHEETS.LOG, [{ '時間': nowText_(), '帳號': user || '', '動作': action, '內容': typeof detail === 'string' ? detail : JSON.stringify(detail), '公司': CTX.company ? CTX.company.name : '' }]);
   } catch (e) {
     // 紀錄失敗不影響主要操作
   }

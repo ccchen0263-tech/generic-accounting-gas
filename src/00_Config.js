@@ -4,7 +4,7 @@
  */
 var APP = {
   name: '公版會計系統',
-  version: '0.1.0'
+  version: '0.2.0'
 };
 
 var SHEETS = {
@@ -18,9 +18,16 @@ var SHEETS = {
   RPT_TB: '報表_試算表',
   RPT_IS: '報表_損益表',
   RPT_BS: '報表_資產負債表',
+  COMPANIES: '公司清單',
   USERS: '_帳號',
+  ACCESS: '_公司權限',
   LOG: '_操作紀錄'
 };
+
+/** 集團主檔上的工作表（帳號、公司清單、權限、操作紀錄）；其餘工作表在各公司自己的試算表 */
+var HUB_SHEETS = [SHEETS.COMPANIES, SHEETS.USERS, SHEETS.ACCESS, SHEETS.LOG];
+/** 每家公司試算表上的工作表 */
+var COMPANY_SHEETS = [SHEETS.SETTINGS, SHEETS.ACCOUNTS, SHEETS.OPENING, SHEETS.VOUCHERS, SHEETS.PERIODS, SHEETS.STOCKTAKE, SHEETS.REF];
 
 var HEADERS = {};
 HEADERS[SHEETS.SETTINGS] = ['項目', '值', '說明'];
@@ -31,7 +38,9 @@ HEADERS[SHEETS.VOUCHERS] = ['傳票號碼', '日期', '類型', '行號', '科�
 HEADERS[SHEETS.PERIODS] = ['期間', '狀態', '鎖定人', '鎖定時間'];
 HEADERS[SHEETS.STOCKTAKE] = ['期間', '存貨科目', '存貨名稱', '帳上金額', '盤點金額', '差額', '對應成本科目', '傳票號碼', '建立者', '建立時間'];
 HEADERS[SHEETS.USERS] = ['帳號', '姓名', '角色', '鹽', '密碼雜湊', '啟用', '建立時間', '最後登入'];
-HEADERS[SHEETS.LOG] = ['時間', '帳號', '動作', '內容'];
+HEADERS[SHEETS.LOG] = ['時間', '帳號', '動作', '內容', '公司'];
+HEADERS[SHEETS.COMPANIES] = ['公司代碼', '公司名稱', '試算表ID', '啟用', '建立時間'];
+HEADERS[SHEETS.ACCESS] = ['帳號', '公司代碼', '角色'];
 
 /** 這些欄位一律存成文字，避免代碼前置零或日期被試算表自動轉換 */
 var TEXT_COLUMNS = {};
@@ -43,6 +52,8 @@ TEXT_COLUMNS[SHEETS.PERIODS] = ['期間', '鎖定時間'];
 TEXT_COLUMNS[SHEETS.STOCKTAKE] = ['期間', '存貨科目', '對應成本科目', '傳票號碼', '建立時間'];
 TEXT_COLUMNS[SHEETS.USERS] = ['帳號', '建立時間', '最後登入'];
 TEXT_COLUMNS[SHEETS.LOG] = ['時間'];
+TEXT_COLUMNS[SHEETS.COMPANIES] = ['公司代碼', '試算表ID', '建立時間'];
+TEXT_COLUMNS[SHEETS.ACCESS] = ['帳號', '公司代碼'];
 TEXT_COLUMNS[SHEETS.SETTINGS] = ['值'];
 
 /** 公司設定的預設值 */
@@ -78,7 +89,10 @@ var BLOCKS = {
 
 var VOUCHER_TYPES = ['收入', '支出', '轉帳'];
 
+/** 在某家公司的角色 */
 var ROLES = ['管理者', '會計', '助理'];
+/** 集團層級身分：管理者＝所有公司的管理者，並可管理公司與帳號；成員＝依「公司權限」逐家設定 */
+var GROUP_ROLES = ['管理者', '成員'];
 
 /**
  * 權限表：每個 API 動作允許哪些角色。
@@ -113,11 +127,13 @@ var PERMISSIONS = {
   toggleAccount:    ['管理者'],
   getSettings:      ['管理者', '會計'],
   saveSettings:     ['管理者'],
-  listUsers:        ['管理者'],
-  saveUser:         ['管理者'],
-  resetPassword:    ['管理者'],
-  listLog:          ['管理者']
+  voucherTemplates: ['管理者', '會計']
 };
+
+/** 只有集團管理者能執行的動作（不分公司） */
+var GROUP_ACTIONS = ['listUsers', 'saveUser', 'resetPassword', 'listLog', 'listCompanies', 'createCompany', 'saveCompany'];
+/** 集團報表：可看「自己是管理者或會計」的公司，至少兩家才顯示 */
+var CONSOLIDATED_ROLES = ['管理者', '會計'];
 
 var LOGIN_MAX_FAILS = 5;
 var LOGIN_LOCK_SECONDS = 600;

@@ -4,7 +4,10 @@
 
 ## 架構
 
-- Google Apps Script + Google 試算表，一家公司一份試算表（綁定式程式）。`src/` 由 clasp 推送，`dist/` 是手動貼上版（`node tools/build-dist.js` 產生，src 改完要重建並一起提交）。
+- Google Apps Script + Google 試算表。程式綁定在「集團主檔」，主檔放公司清單、帳號、公司權限、操作紀錄（`HUB_SHEETS`）；每家公司一份試算表放帳務（`COMPANY_SHEETS`），第一家公司就是主檔本身。
+- `api()` 依前端送來的 `payload._company` 設定 `CTX.company`；`sheet_()` 依工作表名稱自動選主檔或公司試算表。指定了沒權限的公司一律拒絕（bootstrap 除外）。
+- 只能由集團管理者執行的動作列在 `GROUP_ACTIONS`；其他動作依該公司的角色查 `PERMISSIONS`。
+- 依公司區分的狀態（例如傳票流水號 `SEQ_C01_202601`）一定要帶公司代碼。`src/` 由 clasp 推送，`dist/` 是手動貼上版（`node tools/build-dist.js` 產生，src 改完要重建並一起提交）。
 - `10_Core.js` 只做純計算，不呼叫任何 Google 服務，方便在 Node 測試。試算表讀寫只寫在 `20_Store.js`。
 - 前端只呼叫 `api(token, action, payload)`；新增功能 = 在 `HANDLERS` 加一個動作 + 在 `PERMISSIONS` 設定角色。權限一律在伺服器檢查。
 - 名稱結尾沒有底線的全域函式，網頁訪客都能用 `google.script.run` 呼叫。目前只允許 `doGet`、`include`、`api`、`login`、`logout`；選單與編輯器用的管理函式（`setup`、`resetAdminPassword`、`writeReportsThisMonth`）第一行必須呼叫 `requireEditor_()`。其他函式一律以 `_` 結尾。

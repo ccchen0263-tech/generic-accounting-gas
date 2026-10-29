@@ -100,7 +100,7 @@ function sessionFromToken_(token) {
   // 每次確認帳號仍啟用、角色以帳號表為準（改權限立即生效）
   var u = findUser_(s.username);
   if (!u || !u.enabled || s.cred !== credTag_(u)) return null;
-  return { username: u.username, name: u.name, role: u.role };
+  return { username: u.username, name: u.name, groupRole: u.role === '管理者' ? '管理者' : '成員' };
 }
 
 function can_(role, action) {
@@ -108,11 +108,11 @@ function can_(role, action) {
   return !!allowed && allowed.indexOf(role) >= 0;
 }
 
-/** 新增帳號（回傳臨時密碼，只顯示一次） */
+/** 新增帳號（回傳臨時密碼，只顯示一次）；role 為集團身分：管理者／成員 */
 function createUser_(username, name, role) {
   username = str_(username);
   if (!/^[A-Za-z0-9_.-]{3,30}$/.test(username)) throw new Error('帳號需為 3～30 碼英數字');
-  if (ROLES.indexOf(role) < 0) throw new Error('角色不正確');
+  if (GROUP_ROLES.indexOf(role) < 0) throw new Error('身分不正確');
   if (findUser_(username)) throw new Error('帳號 ' + username + ' 已存在');
   var salt = newSalt_();
   var pw = randomPassword_();

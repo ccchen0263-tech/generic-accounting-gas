@@ -26,35 +26,48 @@ function requireEditor_() {
 
 function setup() {
   requireEditor_();
-  var ss = ss_();
-  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', ss.getId());
-  var order = [SHEETS.SETTINGS, SHEETS.ACCOUNTS, SHEETS.OPENING, SHEETS.VOUCHERS, SHEETS.PERIODS, SHEETS.STOCKTAKE, SHEETS.REF, SHEETS.USERS, SHEETS.LOG];
-  order.forEach(function (name) { ensureSheet_(ss, name); });
+  var hub = hubSs_();
+  CTX.company = null;
+  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', hub.getId());
+  HUB_SHEETS.forEach(function (name) { ensureSheet_(hub, name); });
 
-  // 科目參考庫：每次執行都以程式內建版本覆蓋（公版更新時同步）
-  replaceAll_(SHEETS.REF, referenceAccountObjects_().map(function (a) {
-    return {
-      '科目代碼': a.code, '科目名稱': a.name, '類別': a.category, '正常餘額': a.normal, '報表區塊': a.block,
-      '適用產業': a.industries, '盤點對應成本科目': a.stockCost, '說明': a.note
-    };
-  }));
+  // 第一次（或從單一公司版升級）：這份試算表本身就是第一家公司
+  if (!loadCompanies_().length) {
+    var firstName = '';
+    try {
+      var sh = hub.getSheetByName(SHEETS.SETTINGS);
+      if (sh) firstName = loadSettings_().companyName;
+    } catch (e) { firstName = ''; }
+    appendObjects_(SHEETS.COMPANIES, [{ '公司代碼': 'C01', '公司名稱': firstName || '公司一', '試算表ID': hub.getId(), '啟用': '是', '建立時間': nowText_() }]);
+  }
 
-  // 公司設定：補上缺少的項目，不覆蓋已填的值
-  var existing = {};
-  readObjects_(SHEETS.SETTINGS).forEach(function (o) { existing[str_(o['項目'])] = true; });
-  var missing = DEFAULT_SETTINGS.filter(function (d) { return !existing[d[0]]; });
-  appendObjects_(SHEETS.SETTINGS, missing.map(function (d) { return { '項目': d[0], '值': d[1], '說明': d[2] }; }));
+  // 每家公司：補齊工作表、更新科目參考庫（公版更新時同步）
+  var notes = [];
+  loadCompanies_().forEach(function (c) {
+    CTX.company = { id: c.id, name: c.name, spreadsheetId: c.spreadsheetId };
+    CTX.ssCache = {};
+    try { initCompanySheets_(c.name); notes.push(c.id + ' ' + c.name + '：完成'); }
+    catch (e) { notes.push(c.id + ' ' + c.name + '：失敗（' + e.message + '）'); }
+  });
+  CTX.company = null;
 
-  ss.getSheetByName(SHEETS.USERS).hideSheet();
-  ss.getSheetByName(SHEETS.LOG).hideSheet();
+  // 舊版帳號升級：原本的「會計／助理」改成成員，並給第一家公司相同角色
+  var first = loadCompanies_()[0];
+  loadUsers_().forEach(function (u) {
+    if (u.role === '管理者' || u.role === '成員') return;
+    if (ROLES.indexOf(u.role) >= 0) appendObjects_(SHEETS.ACCESS, [{ '帳號': u.username, '公司代碼': first.id, '角色': u.role }]);
+    updateCells_(SHEETS.USERS, u._row, { '角色': '成員' });
+  });
 
-  var msg = '初始設定完成。';
+  [SHEETS.USERS, SHEETS.ACCESS, SHEETS.LOG].forEach(function (n) { hub.getSheetByName(n).hideSheet(); });
+
+  var msg = '初始設定完成。\n' + notes.join('\n');
   if (!loadUsers_().length) {
     var pw = createUser_('admin', '管理者', '管理者');
-    msg += '\n已建立管理者帳號 admin，臨時密碼：' + pw + '\n請登入後立即到「變更密碼」修改。';
+    msg += '\n已建立集團管理者帳號 admin，臨時密碼：' + pw + '\n請登入後立即到「變更密碼」修改。';
     log_('system', '初始設定', '建立 admin 帳號');
   } else {
-    log_('system', '初始設定', '更新科目參考庫');
+    log_('system', '初始設定', '更新工作表與科目參考庫');
   }
   Logger.log(msg);
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) { /* 從編輯器執行時沒有對話框，請看執行紀錄 */ }
@@ -80,6 +93,8 @@ function ensureSheet_(ss, name) {
 /** 選單：把本月損益、試算表與今日資產負債表寫入試算表 */
 function writeReportsThisMonth() {
   requireEditor_();
+  var hubId = hubSs_().getId();
+  CTX.company = loadCompanies_().filter(function (c) { return c.spreadsheetId === hubId; })[0] || null;
   var today = todayText_();
   writeReportSheets_(monthStart_(today.slice(0, 7)), today, today);
   log_('system', '寫入報表分頁', '選單執行');
