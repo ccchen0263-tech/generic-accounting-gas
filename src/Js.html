@@ -1123,7 +1123,7 @@
     }
     function companyForm() {
       var body = openModal('新增公司',
-        '<label>公司名稱<input id="cfName" placeholder="例如：鯉魚食品有限公司"></label>' +
+        '<label>公司名稱<input id="cfName" placeholder="例如：公版食品有限公司"></label>' +
         '<label style="margin-top:10px">統一編號（選填）<input id="cfTax" inputmode="numeric" maxlength="8"></label>' +
         '<div style="margin-top:12px"><div class="muted small">產業類別（決定建議科目與傳票範本，可複選）</div><div style="margin-top:6px">' +
         S.boot.industries.filter(function (i) { return i !== '通用'; }).map(function (i) { return '<label class="check"><input type="checkbox" class="cf-ind" value="' + i + '"> ' + i + '</label>'; }).join('') + '</div></div>' +
@@ -1185,7 +1185,7 @@
           (r.type === 'bs' && sm.difference && sm.difference.total ? '<div class="notice bad">合併後資產與負債＋權益相差 ' + fmt(sm.difference.total) + '，請檢查各公司期初餘額。</div>' : '') +
           '<div class="card"><div class="report-title"><div class="co">集團' + (r.type === 'is' ? '損益表' : '資產負債表') + '</div><div class="rng">' + esc(range) + '</div></div>' +
           '<div class="table-wrap"><table><thead>' + head + '</thead><tbody>' + rows + '</tbody></table></div>' +
-          '<p class="muted small">合併欄為各公司直接加總，尚未沖銷公司間往來（例如鯉魚食品賣給鯉魚餐飲的貨款），合併營收與往來科目可能重複計算。</p></div>';
+          '<p class="muted small">合併欄為各公司直接加總，尚未沖銷公司間往來（例如公版食品賣給公版餐飲的貨款），合併營收與往來科目可能重複計算。</p></div>';
       }).catch(function (e) { $('#gOut').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
     }
     draw();
@@ -1240,7 +1240,7 @@
         '<h3>傳票寫錯怎麼辦</h3><ul><li>未鎖帳：展開傳票按「修改」或「作廢」（作廢需填原因，號碼不重複使用）。</li><li>已鎖帳：在本月新增一張調整傳票，摘要註明原傳票號碼。需要改舊帳時請管理者解鎖。</li></ul>';
       if (S.boot.user.groupRole === '管理者') {
         h += '<h3>集團管理者</h3><ul><li>「公司管理」：新增公司（自動建立該公司的試算表與建議科目）、改名、停用。</li>' +
-          '<li>「帳號與權限」：每個人可以設定在每家公司的角色，例如在鯉魚餐飲是會計、在鯉魚食品是助理。</li>' +
+          '<li>「帳號與權限」：每個人可以設定在每家公司的角色，例如在公版餐飲是會計、在公版食品是助理。</li>' +
           '<li>「集團報表」：損益表、資產負債表每家公司一欄，最後一欄是合併數（尚未沖銷公司間往來）。</li></ul>';
       }
       if (role === '管理者') {

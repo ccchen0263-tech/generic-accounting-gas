@@ -118,12 +118,12 @@ async function idle(page) {
   // 切換公司
   await page.selectOption('#coSwitch', 'C02');
   await idle(page);
-  await page.waitForFunction(() => document.querySelector('#companyTitle').textContent.includes('鯉魚食品'));
+  await page.waitForFunction(() => document.querySelector('#companyTitle').textContent.includes('公版食品'));
   await page.click('#nav a[data-page="group"]');
   await idle(page);
   await page.waitForTimeout(150);
   const groupText = await page.textContent('#gOut');
-  if (!groupText.includes('合併') || !groupText.includes('鯉魚食品')) problems.push('集團報表沒有顯示兩家公司與合併欄');
+  if (!groupText.includes('合併') || !groupText.includes('公版食品')) problems.push('集團報表沒有顯示兩家公司與合併欄');
   await page.screenshot({ path: path.join(shots, 'flow-group-report.png'), fullPage: true });
   await page.selectOption('#coSwitch', 'C01');
   await idle(page);

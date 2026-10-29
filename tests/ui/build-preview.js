@@ -29,7 +29,7 @@ const afterServer = `
   createUser_('helper', '小幫手', '成員'); setPassword_(findUser_('helper'), 'Help12345');
   var s = { username: 'admin', name: '管理者', role: '管理者' };
   CTX.company = loadCompanies_()[0];
-  HANDLERS.saveSettings({ companyName: '鯉魚餐飲有限公司', taxId: '', industries: ['餐飲'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' }, s);
+  HANDLERS.saveSettings({ companyName: '公版餐飲有限公司', taxId: '', industries: ['餐飲'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' }, s);
   HANDLERS.addByIndustry({ industries: ['餐飲'] }, s);
   HANDLERS.saveOpening({ rows: [
     { code: '1111', debit: 50000 }, { code: '1113', debit: 820000 }, { code: '1166', debit: 36000 },
@@ -51,14 +51,14 @@ const afterServer = `
   V('2026-02-09', '收入', '二月第一週營收', [{ code: '1111', debit: 61000 }, { code: '1142', debit: 75000 }, { code: '4121', credit: 104762 }, { code: '4122', credit: 24762 }, { code: '2161', credit: 6476 }]);
   var bad = V('2026-02-09', '支出', '重複輸入', [{ code: '6361', debit: 3200 }, { code: '1111', credit: 3200 }]);
   HANDLERS.voidVoucher({ no: bad.no, reason: '重複輸入' }, s);
-  // 第二家公司：鯉魚食品
+  // 第二家公司：公版食品
   CTX.company = loadCompanies_()[0];
-  var food = HANDLERS.createCompany({ name: '鯉魚食品有限公司', industries: ['食品製造', '食品買賣'] }, s);
+  var food = HANDLERS.createCompany({ name: '公版食品有限公司', industries: ['食品製造', '食品買賣'] }, s);
   CTX.company = loadCompanies_().filter(function (c) { return c.id === food.id; })[0];
   var fs = loadSettings_(); fs.openingDate = '2026-01-01'; saveSettings_(fs);
   HANDLERS.saveOpening({ rows: [{ code: '1113', debit: 600000 }, { code: '1162', debit: 80000 }, { code: '1431', debit: 420000 }, { code: '3111', credit: 1100000 }] }, s);
   V('2026-01-12', '轉帳', '原料進貨（月結）', applyTemplate_(templatesFor_(['食品製造'], loadAccounts_()).filter(function (t) { return t.id === 'f-raw'; })[0], 126000));
-  V('2026-01-20', '轉帳', '自製產品銷貨', [{ code: '1141', debit: 294000, party: '鯉魚餐飲' }, { code: '4111', credit: 280000 }, { code: '2161', credit: 14000 }]);
+  V('2026-01-20', '轉帳', '自製產品銷貨', [{ code: '1141', debit: 294000, party: '公版餐飲' }, { code: '4111', credit: 280000 }, { code: '2161', credit: 14000 }]);
   V('2026-01-25', '轉帳', '電商銷售（選品）', [{ code: '1144', debit: 63000 }, { code: '4112', credit: 60000 }, { code: '2161', credit: 3000 }]);
   V('2026-01-28', '支出', '產線薪資', [{ code: '5141', debit: 96000 }, { code: '1113', credit: 96000 }]);
   CTX.company = null;

@@ -28,7 +28,7 @@ function setupApp() {
 function restaurantBooks() {
   const ctx = setupApp();
   const { call } = ctx;
-  call('saveSettings', { companyName: '鯉魚餐飲有限公司', taxId: '', industries: ['餐飲'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' });
+  call('saveSettings', { companyName: '公版餐飲有限公司', taxId: '', industries: ['餐飲'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' });
   call('addByIndustry', { industries: ['餐飲'] });
   call('saveOpening', { rows: [
     { code: '1111', debit: 100000, credit: 0 },
@@ -417,15 +417,15 @@ test('忘記密碼被鎖住後，重設 admin 密碼即可馬上登入', () => {
 // ───────────── 第 0.2 版：多公司、集團報表、傳票範本 ─────────────
 
 function groupBooks() {
-  const ctx = restaurantBooks(); // C01 鯉魚餐飲（集團主檔本身）
+  const ctx = restaurantBooks(); // C01 公版餐飲（集團主檔本身）
   const { app, token } = ctx;
   const callAt = (company, action, payload) => {
     const r = app.api(token, action, Object.assign({ _company: company }, payload || {}));
     if (!r.ok) throw new Error(r.error);
     return r.data;
   };
-  const food = callAt('C01', 'createCompany', { name: '鯉魚食品有限公司', industries: ['食品製造', '食品買賣'] });
-  callAt(food.id, 'saveSettings', { companyName: '鯉魚食品有限公司', industries: ['食品製造', '食品買賣'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' });
+  const food = callAt('C01', 'createCompany', { name: '公版食品有限公司', industries: ['食品製造', '食品買賣'] });
+  callAt(food.id, 'saveSettings', { companyName: '公版食品有限公司', industries: ['食品製造', '食品買賣'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' });
   callAt(food.id, 'saveOpening', { rows: [{ code: '1113', debit: 300000 }, { code: '3111', credit: 300000 }] });
   callAt(food.id, 'saveVoucher', { date: '2026-01-10', type: '轉帳', memo: '自製產品銷貨', lines: [{ code: '1141', debit: 52500 }, { code: '4111', credit: 50000 }, { code: '2161', credit: 2500 }] });
   callAt(food.id, 'saveVoucher', { date: '2026-01-12', type: '轉帳', memo: '原料進貨', lines: [{ code: '5131', debit: 20000 }, { code: '1191', debit: 1000 }, { code: '2131', credit: 21000 }] });
@@ -440,7 +440,7 @@ test('多公司：setup 把原本的試算表登記為第一家公司，舊帳�
   assert.equal(companies[0].id, 'C01');
   assert.equal(companies[0].spreadsheetId, 'fake-spreadsheet-id');
   const b = call('bootstrap');
-  assert.equal(b.company.name, '鯉魚餐飲有限公司'); // 公司設定改名時同步到公司清單
+  assert.equal(b.company.name, '公版餐飲有限公司'); // 公司設定改名時同步到公司清單
   const users = call('listUsers').users;
   assert.equal(users.find((u) => u.username === 'acct').access[0].role, '會計');
 });
@@ -453,7 +453,7 @@ test('多公司：新增公司會建立獨立試算表，帳務完全分開', ()
   assert.ok(!foodSs.getSheetByName('工作表1'), '新試算表的空白工作表要移除');
   assert.ok(!foodSs.getSheetByName('_帳號'), '帳號只放在集團主檔');
   const foodBoot = callAt('C02', 'bootstrap');
-  assert.equal(foodBoot.company.name, '鯉魚食品有限公司');
+  assert.equal(foodBoot.company.name, '公版食品有限公司');
   assert.ok(foodBoot.accounts.some((a) => a.code === '5131'), '依產業自動帶入食品科目');
   assert.ok(!foodBoot.accounts.some((a) => a.code === '1166'), '不帶入餐飲專用科目');
   assert.equal(callAt('C02', 'listVouchers', { period: '2026-01' }).vouchers.length, 2);
@@ -488,8 +488,8 @@ test('多公司：停用公司後就不能切換進去，至少保留一家', ()
   callAt('C01', 'saveCompany', { id: 'C02', enabled: false });
   assert.deepEqual(plain(callAt('C01', 'bootstrap').companies.map((c) => c.id)), ['C01']);
   assert.throws(() => callAt('C01', 'saveCompany', { id: 'C01', enabled: false }), /至少要保留/);
-  callAt('C01', 'saveCompany', { id: 'C02', enabled: true, name: '鯉魚食品股份有限公司' });
-  assert.equal(callAt('C02', 'bootstrap').settings.companyName, '鯉魚食品股份有限公司');
+  callAt('C01', 'saveCompany', { id: 'C02', enabled: true, name: '公版食品股份有限公司' });
+  assert.equal(callAt('C02', 'bootstrap').settings.companyName, '公版食品股份有限公司');
 });
 
 test('集團報表：每家公司單獨一欄＋合併欄', () => {
@@ -541,10 +541,10 @@ test('傳票範本：依產業顯示，含稅金額自動拆未稅與 5% 稅額'
 
 test('全新部署：以試算表檔名當第一家公司名稱', () => {
   const app = loadApp();
-  app.__ss.name = '鯉魚餐飲有限公司｜集團會計系統（主檔）';
+  app.__ss.name = '公版餐飲有限公司｜集團會計系統（主檔）';
   app.setup();
   const c = app.loadCompanies_()[0];
-  assert.equal(c.name, '鯉魚餐飲有限公司');
+  assert.equal(c.name, '公版餐飲有限公司');
   app.CTX.company = c;
-  assert.equal(app.loadSettings_().companyName, '鯉魚餐飲有限公司');
+  assert.equal(app.loadSettings_().companyName, '公版餐飲有限公司');
 });
