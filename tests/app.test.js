@@ -403,3 +403,13 @@ test('審查修正：盤點對應成本科目只能設在流動資產（存貨�
   assert.throws(() => call('saveAccount', { account: { code: '4121', name: '餐飲收入－內用', block: '營業收入', stockCost: '5171' } }), /只有流動資產/);
   assert.throws(() => call('saveAccount', { isNew: true, account: { code: '2199', name: '測試', block: '流動負債', stockCost: '5171' } }), /只有流動資產/);
 });
+
+test('忘記密碼被鎖住後，重設 admin 密碼即可馬上登入', () => {
+  const { app } = setupApp();
+  for (let i = 0; i < 6; i++) app.login('admin', 'wrong', 'mybrowser');
+  assert.match(app.login('admin', 'wrong', 'mybrowser').error, /過多/);
+  app.__logs.length = 0;
+  app.resetAdminPassword();
+  const pw = /臨時密碼：(\S+)/.exec(app.__logs.join('\n'))[1];
+  assert.equal(app.login('admin', pw, 'mybrowser').ok, true);
+});

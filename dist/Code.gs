@@ -1139,13 +1139,15 @@ function login(username, password, clientId) {
     var cache = CacheService.getScriptCache();
     var user = str_(username).toLowerCase();
     var cid = str_(clientId).replace(/[^A-Za-z0-9-]/g, '').slice(0, 40);
-    var key = 'fail_' + user + '_' + cid;
-    var gkey = 'gfail_' + user;
+    var u = findUser_(username);
+    // 鎖定計數綁定目前的密碼版本：密碼被重設後，舊的錯誤次數自動歸零
+    var ver = u ? credTag_(u) : 'none';
+    var key = 'fail_' + user + '_' + cid + '_' + ver;
+    var gkey = 'gfail_' + user + '_' + ver;
     var fails = Number(cache.get(key)) || 0;
     var gfails = Number(cache.get(gkey)) || 0;
-    if (fails >= LOGIN_MAX_FAILS) return { ok: false, error: '密碼錯誤次數過多，請 10 分鐘後再試' };
+    if (fails >= LOGIN_MAX_FAILS) return { ok: false, error: '密碼錯誤次數過多，請 10 分鐘後再試（或請管理者重設密碼）' };
     if (gfails >= LOGIN_GLOBAL_SLOWDOWN) Utilities.sleep(3000);
-    var u = findUser_(username);
     if (!u || !u.enabled || hashPassword_(u.salt, String(password || '')) !== u.hash) {
       cache.put(key, String(fails + 1), LOGIN_LOCK_SECONDS);
       cache.put(gkey, String(gfails + 1), LOGIN_LOCK_SECONDS);
