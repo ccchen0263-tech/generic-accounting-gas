@@ -3,6 +3,8 @@
  * 只實作本系統用到的方法；超出範圍的 getRange 會丟錯，與真實試算表一致。
  */
 (function (root) {
+  function atobSafe(s) { return typeof atob === 'function' ? atob(s) : Buffer.from(s, 'base64').toString('binary'); }
+  function btoaSafe(s) { return typeof btoa === 'function' ? btoa(s) : Buffer.from(s, 'binary').toString('base64'); }
   function sha256Bytes(str) {
     // UTF-8 編碼
     var bytes = [];
@@ -163,6 +165,39 @@
         .replace('HH', p(d.getUTCHours())).replace('mm', p(d.getUTCMinutes())).replace('ss', p(d.getUTCSeconds()));
     }
 
+    var drive = { seq: 0, files: {}, folders: {}, docs: {}, ocrQueue: [], ocrCalls: [], removed: [] };
+    function makeBlob(bytes, type, name) {
+      return {
+        getBytes: function () { return bytes.slice(); }, getContentType: function () { return type; },
+        getName: function () { return name; }, setName: function (n) { name = n; return this; }
+      };
+    }
+    function makeFolder(name) {
+      var id = 'folder-' + (++drive.seq);
+      var children = [];
+      var f = {
+        name: name, children: children,
+        getId: function () { return id; }, getName: function () { return name; },
+        getFoldersByName: function (n) { var list = children.filter(function (c) { return c.name === n; }); var i = 0; return { hasNext: function () { return i < list.length; }, next: function () { return list[i++]; } }; },
+        createFolder: function (n) { var c = makeFolder(n); children.push(c); return c; },
+        createFile: function (blob) {
+          var fid = 'file-' + (++drive.seq);
+          var file = {
+            name: blob.getName(), folder: f,
+            getId: function () { return fid; }, getName: function () { return blob.getName(); },
+            getBlob: function () { return blob; }, getMimeType: function () { return blob.getContentType(); },
+            getThumbnail: function () { return makeBlob([1, 2, 3], 'image/png', 'thumb.png'); },
+            setTrashed: function () { return this; }
+          };
+          drive.files[fid] = file;
+          return file;
+        }
+      };
+      drive.folders[id] = f;
+      return f;
+    }
+    drive.root = makeFolder('我的雲端硬碟');
+
     var env = {
       SpreadsheetApp: {
         getActiveSpreadsheet: function () { return ss; },
@@ -201,14 +236,39 @@
           for (var i = 0; i < 32; i++) hex += Math.floor(Math.random() * 16).toString(16);
           return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
         },
-        formatDate: function (date, tz, fmt) { return formatDate(date, tz, fmt); }
+        formatDate: function (date, tz, fmt) { return formatDate(date, tz, fmt); },
+        base64Decode: function (b64) { return Array.prototype.map.call(atobSafe(b64), function (c) { var x = c.charCodeAt(0); return x > 127 ? x - 256 : x; }); },
+        base64Encode: function (bytes) { return btoaSafe(bytes.map(function (b) { return String.fromCharCode(b < 0 ? b + 256 : b); }).join('')); },
+        newBlob: function (bytes, type, name) { return makeBlob(bytes, type, name); }
       },
       DriveApp: {
         getFileById: function (id) {
+          if (drive.files[id]) return drive.files[id];
+          // 試算表檔案：只需要上層資料夾
           return {
-            getParents: function () { var done = false; return { hasNext: function () { return !done; }, next: function () { done = true; return { id: 'folder' }; } }; },
-            moveTo: function () { return this; }
+            getParents: function () { var done = false; return { hasNext: function () { return !done; }, next: function () { done = true; return drive.root; } }; },
+            moveTo: function () { return this; },
+            setTrashed: function () { return this; }
           };
+        },
+        getFolderById: function (id) { if (!drive.folders[id]) throw new Error('找不到資料夾'); return drive.folders[id]; },
+        getRootFolder: function () { return drive.root; }
+      },
+      Drive: {
+        Files: {
+          create: function (meta, blob, opts) {
+            drive.ocrCalls.push({ meta: meta, opts: opts, name: blob.getName() });
+            var id = 'doc-' + (++drive.seq);
+            drive.docs[id] = drive.ocrQueue.length ? drive.ocrQueue.shift() : '';
+            return { id: id };
+          },
+          remove: function (id) { drive.removed.push(id); delete drive.docs[id]; }
+        }
+      },
+      DocumentApp: {
+        openById: function (id) {
+          if (drive.docs[id] === undefined) throw new Error('找不到文件');
+          return { getBody: function () { return { getText: function () { return drive.docs[id]; } }; } };
         }
       },
       Logger: { log: function (m) { logs.push(String(m)); } },
@@ -219,7 +279,7 @@
       HtmlService: {},
       // 測試輔助
       __ss: ss, __registry: registry, __props: props, __cache: cache, __logs: logs, __clock: clock, __sha256: sha256Bytes,
-      __nowDate: nowDate, __session: session
+      __nowDate: nowDate, __session: session, __drive: drive
     };
     // 讓 new Date() 也能固定時間：測試透過 Utilities.formatDate(new Date()) 取得今天，因此改寫 formatDate 的輸入
     var realFormat = env.Utilities.formatDate;

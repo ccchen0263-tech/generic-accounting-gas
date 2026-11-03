@@ -93,6 +93,8 @@ HANDLERS.listVouchers = function (p) {
       });
     });
   }
+  var docs = docsByVoucher_();
+  list.forEach(function (v) { v.docs = docs[v.no] || []; });
   return { period: period, vouchers: list.reverse() };
 };
 
@@ -103,7 +105,22 @@ HANDLERS.getVoucher = function (p) {
 };
 
 HANDLERS.saveVoucher = function (p, s) {
-  return withLock_(function () { return saveVoucherCore_(p, s); });
+  return withLock_(function () {
+    // 來源由系統決定，不接受畫面送來的值（避免偽裝成「月底盤點」等系統傳票）
+    p.source = undefined;
+    var doc = null;
+    if (p.docId) {
+      if (p.no) throw new Error('修改傳票時不能再連結單據');
+      doc = docForVoucher_(p.docId);
+      p.source = '單據';
+    }
+    var r = saveVoucherCore_(p, s);
+    if (doc) {
+      markDocPosted_(doc, r.no, s);
+      log_(s.username, '單據入帳', doc.id + ' → 傳票 ' + r.no);
+    }
+    return r;
+  });
 };
 
 /** 新增或修改傳票（不加鎖，呼叫端負責加鎖） */
@@ -164,6 +181,7 @@ HANDLERS.voidVoucher = function (p, s) {
     if (!reason) throw new Error('請填寫作廢原因');
     var now = nowText_();
     rows.forEach(function (l) { updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now }); });
+    releaseDocsOf_(p.no, s);
     log_(s.username, '作廢傳票', p.no + '：' + reason);
     return { no: p.no };
   });

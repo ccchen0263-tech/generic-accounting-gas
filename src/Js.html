@@ -196,6 +196,7 @@
     { group: '日常作業' },
     { id: 'home', title: '首頁' },
     { id: 'vouchers', title: '傳票', need: 'listVouchers' },
+    { id: 'docs', title: '單據匣', need: 'listDocs' },
     { id: 'stocktake', title: '月底盤點', need: 'stocktakePreview' },
     { group: '帳簿與報表' },
     { id: 'journal', title: '日記簿', need: 'journal' },
@@ -426,10 +427,11 @@
             '<span class="no">' + esc(v.no) + '</span><span>' + esc(v.date) + '</span><span class="muted">' + esc(v.type) + '</span>' +
             '<span class="memo">' + esc(v.memo) + '</span><span class="num">' + fmt(v.debit) + '</span>' +
             (isVoid ? '<span class="badge void">作廢</span>' : '') + (v.source === '月底盤點' ? '<span class="badge auto">月底盤點</span>' : '') +
-            (locked ? '<span class="badge lock">已鎖帳</span>' : '') + '</div>' +
+            (locked ? '<span class="badge lock">已鎖帳</span>' : '') + (v.docs && v.docs.length ? '<span class="badge open">附單據</span>' : '') + '</div>' +
             '<div class="voucher-body" hidden><div class="table-wrap"><table><thead><tr><th>科目</th><th class="num">借方</th><th class="num">貸方</th><th>摘要</th><th>往來對象</th></tr></thead><tbody>' +
             v.lines.map(function (l) { return '<tr class="' + (isVoid ? 'void' : '') + '"><td><span class="code">' + esc(l.code) + '</span> ' + esc(l.name) + '</td><td class="num">' + (l.debit ? fmt(l.debit) : '') + '</td><td class="num">' + (l.credit ? fmt(l.credit) : '') + '</td><td>' + esc(l.memo) + '</td><td>' + esc(l.party) + '</td></tr>'; }).join('') +
             '</tbody></table></div><div class="voucher-actions">' +
+            (v.docs || []).map(function (d) { return d.hasFile ? '<button class="btn small" type="button" data-doc="' + esc(d.id) + '">查看單據 ' + esc(d.id) + '</button>' : '<span class="muted small">財政部發票 ' + esc(d.invoiceNo) + '</span>'; }).join('') +
             (!isVoid && !locked && v.source !== '月底盤點' && can('saveVoucher') ? '<button class="btn small" type="button" data-act="edit">修改</button>' : '') +
             (!isVoid && !locked && can('saveVoucher') ? '<button class="btn small" type="button" data-act="copy">複製成新傳票</button>' : '') +
             (!isVoid && !locked && v.source !== '月底盤點' && can('voidVoucher') ? '<button class="btn small danger" type="button" data-act="void">作廢</button>' : '') +
@@ -441,6 +443,7 @@
           var toggle = function () { body.hidden = !body.hidden; head.setAttribute('aria-expanded', String(!body.hidden)); };
           head.onclick = toggle;
           head.onkeydown = function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); } };
+          $all('[data-doc]', card).forEach(function (b) { b.onclick = function () { viewDoc(b.getAttribute('data-doc')); }; });
           $all('[data-act]', card).forEach(function (b) {
             b.onclick = function () {
               var act = b.getAttribute('data-act');
@@ -458,12 +461,17 @@
     return load();
   };
 
-  function voucherEditor(v, onSaved, isCopy) {
+  function voucherEditor(v, onSaved, isCopy, opts) {
+    opts = opts || {};
+    var doc = opts.doc || null;
     var editing = v && v.no && !isCopy;
-    var title = (editing ? '修改傳票 ' + v.no : '新增傳票') + '｜' + coName();
-    var tpls = (!editing && S.boot.templates) ? S.boot.templates : [];
+    var title = (doc ? '單據入帳 ' + doc.id : editing ? '修改傳票 ' + v.no : '新增傳票') + '｜' + coName();
+    var tpls = (!editing && !doc && S.boot.templates) ? S.boot.templates : [];
     var body = openModal(title,
       '<datalist id="acctList">' + acctOptions() + '</datalist>' +
+      (doc ? '<div class="notice info">已依單據自動帶入科目與金額，<b>請對照原始單據確認</b>日期、金額、科目後再儲存。' +
+        (doc.date ? '' : '<br>單據上的日期沒有辨識出來，請自己填。') + (doc.total ? '' : '<br>金額沒有辨識出來，請自己填。') +
+        (doc.hasFile ? ' <button class="btn small" type="button" id="edDocBtn">顯示原始單據</button><div id="edDocView"></div>' : '') + '</div>' : '') +
       (tpls.length ? '<div class="tpl-bar"><label class="grow">常用範本（選了會自動帶科目）<select id="edTpl"><option value="">（不套用，自己輸入）</option>' +
         tpls.map(function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>'; }).join('') + '</select></label>' +
         '<label class="field" id="edAmtWrap" hidden><span id="edAmtLabel">含稅金額</span><input id="edAmt" class="num" inputmode="numeric" placeholder="例如 10500"></label>' +
@@ -564,10 +572,19 @@
       };
       $('#edAmt', body).addEventListener('input', fillAmounts);
     }
+    if (doc && doc.hasFile) {
+      $('#edDocBtn', body).onclick = function () {
+        var box = $('#edDocView', body);
+        if (box.innerHTML) { box.innerHTML = ''; this.textContent = '顯示原始單據'; return; }
+        this.textContent = '收起原始單據';
+        loadDocInto(doc.id, box);
+      };
+    }
     $('#edCancel', body).onclick = closeModal;
     $('#edSave', body).onclick = function () {
       var lines = collect().filter(function (l) { return l.code || l.debit || l.credit; });
       var payload = { no: editing ? v.no : '', date: $('#edDate', body).value, type: $('#edType', body).value, memo: $('#edMemo', body).value.trim(), lines: lines };
+      if (doc) payload.docId = doc.id;
       $('#edErr', body).textContent = '';
       call('saveVoucher', payload).then(function (r) {
         closeModal();
@@ -575,6 +592,214 @@
         if (onSaved) onSaved();
       }).catch(function (e) { $('#edErr', body).textContent = e.message; });
     };
+  }
+
+  // ── 單據匣 ──
+  function loadDocInto(id, box) {
+    box.innerHTML = '<p class="muted small">讀取原始單據…</p>';
+    return call('docFile', { id: id }).then(function (f) {
+      var h = f.image ? '<img class="doc-img" alt="' + esc(f.name) + '" src="' + f.image + '">' : '';
+      if (f.pdf) h += '<p><a class="btn small" download="' + esc(f.name || (id + '.pdf')) + '" href="data:application/pdf;base64,' + f.pdf + '">下載 PDF 原檔</a>' + (f.image ? ' <span class="muted small">上圖為第一頁</span>' : '') + '</p>';
+      box.innerHTML = h || '<p class="muted">無法顯示這個檔案</p>';
+    }).catch(function (e) { box.innerHTML = '<p class="error-text">' + esc(e.message) + '</p>'; });
+  }
+  function viewDoc(id) {
+    var body = openModal('單據 ' + id, '<div id="docView"></div><div class="modal-foot"><button class="btn" type="button" id="docClose">關閉</button></div>');
+    $('#docClose', body).onclick = closeModal;
+    loadDocInto(id, $('#docView', body));
+  }
+  /** 照片在手機上先縮小（最長邊 2000 像素、JPEG），上傳更快；PDF 原檔上傳 */
+  function readFileForUpload(file) {
+    return new Promise(function (resolve, reject) {
+      var name = file.name || '單據';
+      if (file.type === 'application/pdf' || /\.pdf$/i.test(name)) {
+        if (file.size > 10 * 1024 * 1024) { reject(new Error(name + ' 超過 10MB')); return; }
+        var r = new FileReader();
+        r.onload = function () { resolve({ name: name, mimeType: 'application/pdf', data: String(r.result).split(',')[1] }); };
+        r.onerror = function () { reject(new Error(name + ' 讀取失敗')); };
+        r.readAsDataURL(file);
+        return;
+      }
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        var max = 2000, w = img.naturalWidth, h = img.naturalHeight;
+        var k = Math.min(1, max / Math.max(w, h));
+        var c = document.createElement('canvas');
+        c.width = Math.round(w * k); c.height = Math.round(h * k);
+        var g = c.getContext('2d');
+        g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+        g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        resolve({ name: name.replace(/\.[^.]+$/, '') + '.jpg', mimeType: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.85).split(',')[1] });
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error(name + ' 不是可讀取的照片（iPhone 請在「設定 → 相機 → 格式」選「最相容」）')); };
+      img.src = url;
+    });
+  }
+  /** 財政部下載檔可能是 UTF-8 或 Big5 */
+  function readTextFile(file) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () {
+        var buf = r.result, text;
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+        catch (e) { try { text = new TextDecoder('big5').decode(buf); } catch (e2) { reject(new Error('檔案編碼無法辨識')); return; } }
+        resolve(text);
+      };
+      r.onerror = function () { reject(new Error('檔案讀取失敗')); };
+      r.readAsArrayBuffer(file);
+    });
+  }
+  var DOC_BADGE = { '待處理': 'auto', '重複': 'void', '已入帳': 'open', '略過': 'lock' };
+  RENDER.docs = function (el) {
+    var status = S.docStatus || '待處理';
+    var html = '';
+    if (can('uploadDoc')) {
+      html += '<div class="card"><h3 style="margin-top:0">上傳發票、收據</h3>' +
+        '<p class="muted small" style="margin-top:0">可以一次選很多張。<b>一張照片只拍一張單據</b>，拍正、拍清楚、不要反光。支援照片與 PDF（每個檔案 10MB 以內）。系統會自動讀出日期、發票號碼、統編、金額，產生待確認的草稿。</p>' +
+        '<div class="row"><label class="btn primary file-btn">選擇照片或 PDF<input type="file" id="docFiles" multiple accept="image/*,application/pdf" class="sr-only"></label>' +
+        (can('importInvoices') ? '<label class="btn file-btn">匯入財政部進項發票檔<input type="file" id="invFile" accept=".csv,.txt,text/csv,text/plain" class="sr-only"></label>' : '') +
+        '</div><div id="upProg" class="small" role="status" aria-live="polite"></div></div>';
+    }
+    html += '<div class="toolbar"><div class="chips" id="docTabs">' + ['待處理', '已入帳', '略過', '全部'].map(function (t) {
+      return '<button type="button" class="chip' + (t === status ? ' on' : '') + '" data-st="' + t + '">' + t + '<span data-cnt="' + t + '"></span></button>';
+    }).join('') + '</div><label class="grow">搜尋（廠商、發票號碼、單據編號）<input id="docKw"></label><button class="btn" type="button" id="docGo">查詢</button></div><div id="docList"></div>';
+    el.innerHTML = html;
+    $all('#docTabs .chip').forEach(function (b) {
+      b.onclick = function () { status = S.docStatus = b.getAttribute('data-st'); $all('#docTabs .chip').forEach(function (x) { x.classList.toggle('on', x === b); }); load(); };
+    });
+    $('#docGo').onclick = load;
+    $('#docKw').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') load(); });
+
+    var files = $('#docFiles');
+    if (files) files.onchange = function () {
+      var list = Array.prototype.slice.call(files.files);
+      files.value = '';
+      if (!list.length) return;
+      var prog = $('#upProg');
+      var done = [], failed = [];
+      var step = function (i) {
+        if (i >= list.length) {
+          var dup = done.filter(function (d) { return d.status === '重複'; }).length;
+          var miss = done.filter(function (d) { return d.status !== '重複' && !d.total; }).length;
+          prog.innerHTML = '<div class="notice ' + (failed.length ? 'warn' : 'good') + '" style="margin:10px 0 0">已上傳 ' + done.length + ' 張' +
+            (dup ? '，其中 ' + dup + ' 張和之前的發票號碼相同（標示「重複」）' : '') + (miss ? '，' + miss + ' 張沒有讀到金額，入帳時請自己填' : '') +
+            (failed.length ? '<br>失敗 ' + failed.length + ' 張：' + failed.map(esc).join('；') : '') + '</div>';
+          status = S.docStatus = '待處理';
+          $all('#docTabs .chip').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-st') === status); });
+          load();
+          return;
+        }
+        prog.textContent = '上傳並辨識第 ' + (i + 1) + ' / ' + list.length + ' 張（每張約 5～15 秒）…';
+        readFileForUpload(list[i]).then(function (f) { return call('uploadDoc', f); })
+          .then(function (r) { done.push(r); }, function (e) { failed.push(e.message); })
+          .then(function () { step(i + 1); });
+      };
+      step(0);
+    };
+    var inv = $('#invFile');
+    if (inv) inv.onchange = function () {
+      var f = inv.files[0];
+      inv.value = '';
+      if (!f) return;
+      readTextFile(f).then(function (text) { return call('importInvoices', { text: text, fileName: f.name }); }).then(function (r) {
+        $('#upProg').innerHTML = '<div class="notice good" style="margin:10px 0 0">匯入 ' + r.added + ' 張發票' +
+          (r.duplicates.length ? '；' + r.duplicates.length + ' 張之前已經有了，沒有重複建立' : '') +
+          (r.skipped.length ? '<br>略過 ' + r.skipped.length + ' 列：' + r.skipped.slice(0, 5).map(esc).join('；') + (r.skipped.length > 5 ? '…' : '') : '') + '</div>';
+        status = S.docStatus = '待處理';
+        $all('#docTabs .chip').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-st') === status); });
+        load();
+      }).catch(function (e) { $('#upProg').innerHTML = '<div class="notice bad" style="margin:10px 0 0">' + esc(e.message) + '</div>'; });
+    };
+
+    function payDefault(r, d) {
+      var saved = null;
+      try { saved = window.localStorage.getItem('acct_pay_' + S.companyId); } catch (e) { saved = null; }
+      var codes = r.payAccounts.map(function (x) { return x.code; });
+      if (d.source === '財政部匯入' && codes.indexOf('2131') >= 0) return '2131';
+      if (saved && codes.indexOf(saved) >= 0) return saved;
+      return codes.indexOf('1111') >= 0 ? '1111' : codes[0] || '';
+    }
+    function load() {
+      return call('listDocs', { status: status, keyword: $('#docKw').value }).then(function (r) {
+        Object.keys(r.counts).forEach(function (k) { var c = $('[data-cnt="' + k + '"]'); if (c) c.textContent = r.counts[k] ? ' ' + r.counts[k] : ''; });
+        var list = $('#docList');
+        if (!r.docs.length) {
+          list.innerHTML = '<div class="card muted">' + (status === '待處理' ? '沒有待處理的單據。' + (can('uploadDoc') ? '上傳發票或收據照片後會出現在這裡。' : '') : '沒有符合的單據。') + '</div>';
+          return;
+        }
+        list.innerHTML = r.docs.map(function (d, i) {
+          var open = d.status === '待處理' || d.status === '重複';
+          return '<div class="voucher" data-i="' + i + '"><div class="voucher-head" role="button" tabindex="0" aria-expanded="false">' +
+            '<span class="no">' + esc(d.id) + '</span><span>' + esc(d.date || '日期未辨識') + '</span>' +
+            '<span class="memo">' + esc(d.sellerName || (d.source === '財政部匯入' ? d.sellerTaxId : '廠商未辨識')) + (d.invoiceNo ? ' <span class="muted small">' + esc(d.invoiceNo) + '</span>' : '') + '</span>' +
+            '<span class="num">' + (d.total ? fmt(d.total) : '<span class="muted">金額未辨識</span>') + '</span>' +
+            '<span class="badge ' + (DOC_BADGE[d.status] || 'lock') + '">' + esc(d.status) + '</span>' +
+            '<span class="muted small">' + esc(d.source === '財政部匯入' ? '財政部' : d.kind) + '</span></div>' +
+            '<div class="voucher-body" hidden><div class="table-wrap"><table><tbody>' +
+            '<tr><th>種類</th><td>' + esc(d.kind) + '（' + esc(d.source) + '）</td></tr>' +
+            '<tr><th>發票號碼</th><td>' + esc(d.invoiceNo || '—') + '</td></tr>' +
+            '<tr><th>賣方</th><td>' + esc(d.sellerName || '—') + (d.sellerTaxId ? '　統編 ' + esc(d.sellerTaxId) : '') + '</td></tr>' +
+            '<tr><th>金額</th><td>未稅 ' + fmt(d.net) + '　稅額 ' + fmt(d.tax) + '　總計 <b>' + fmt(d.total) + '</b>' + (d.tax && !d.deductible ? '　<span class="muted small">（沒有本公司統編，稅額不能扣抵）</span>' : '') + '</td></tr>' +
+            '<tr><th>建議科目</th><td>' + esc(d.suggest ? acctLabel(d.suggest) : '—') + '</td></tr>' +
+            '<tr><th>上傳</th><td>' + esc(d.uploadedBy) + '　' + esc(d.uploadedAt) + (d.fileName ? '　' + esc(d.fileName) : '') + '</td></tr>' +
+            (d.voucherNo ? '<tr><th>傳票</th><td>' + esc(d.voucherNo) + '　' + esc(d.doneBy) + ' ' + esc(d.doneAt) + '</td></tr>' : '') +
+            (d.note ? '<tr><th>備註</th><td>' + esc(d.note) + '</td></tr>' : '') +
+            '</tbody></table></div>' +
+            (d.text ? '<details class="ocr"><summary>辨識出的文字</summary><pre class="ocr-text">' + esc(d.text) + '</pre></details>' : '') +
+            '<div class="doc-view"></div><div class="voucher-actions">' +
+            (d.hasFile ? '<button class="btn small" type="button" data-act="file">查看原始單據</button>' : '') +
+            (open && can('saveVoucher') && r.payAccounts.length ? '<label class="pay-pick">付款方式<select data-pay>' + r.payAccounts.map(function (x) { return '<option value="' + esc(x.code) + '"' + (x.code === payDefault(r, d) ? ' selected' : '') + '>' + esc(x.label) + '</option>'; }).join('') + '</select></label>' +
+              '<button class="btn small primary" type="button" data-act="post">產生傳票</button>' : '') +
+            (open && can('skipDoc') ? '<button class="btn small" type="button" data-act="skip">略過</button>' : '') +
+            ((d.status === '略過' || d.status === '重複') && can('restoreDoc') ? '<button class="btn small" type="button" data-act="restore">改回待處理</button>' : '') +
+            '</div></div></div>';
+        }).join('');
+        $all('.voucher', list).forEach(function (card) {
+          var d = r.docs[+card.getAttribute('data-i')];
+          var head = $('.voucher-head', card), body = $('.voucher-body', card);
+          var toggle = function () { body.hidden = !body.hidden; head.setAttribute('aria-expanded', String(!body.hidden)); };
+          head.onclick = toggle;
+          head.onkeydown = function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); } };
+          $all('[data-act]', card).forEach(function (b) {
+            b.onclick = function () {
+              var act = b.getAttribute('data-act');
+              if (act === 'file') {
+                var box = $('.doc-view', card);
+                if (box.innerHTML) { box.innerHTML = ''; b.textContent = '查看原始單據'; } else { b.textContent = '收起原始單據'; loadDocInto(d.id, box); }
+              }
+              if (act === 'post') {
+                var pay = $('[data-pay]', card).value;
+                try { if (d.source !== '財政部匯入') window.localStorage.setItem('acct_pay_' + S.companyId, pay); } catch (e) { /* 忽略 */ }
+                var enabled = {};
+                S.boot.accounts.forEach(function (a) { if (a.enabled) enabled[a.code] = true; });
+                var lines = docLines(d, d.suggest, pay, enabled);
+                var memo = [d.sellerName || d.kind || '單據', d.invoiceNo].filter(Boolean).join(' ');
+                voucherEditor({ date: d.date || today(), type: pay === '2131' || pay === '2193' || pay === '1142' ? '轉帳' : '支出', memo: memo, lines: lines }, load, true, { doc: d });
+              }
+              if (act === 'skip') ask('略過單據 ' + d.id, '略過的單據不會入帳，之後可以在「略過」分頁改回待處理。', { input: '略過原因（例如：重複拍照、私人消費）', okText: '略過' }).then(function (reason) {
+                if (!reason) return;
+                call('skipDoc', { id: d.id, reason: reason }).then(function () { toast('已略過 ' + d.id); load(); }).catch(function (e) { toast(e.message, true); });
+              });
+              if (act === 'restore') call('restoreDoc', { id: d.id }).then(function () { toast(d.id + ' 已改回待處理'); load(); }).catch(function (e) { toast(e.message, true); });
+            };
+          });
+        });
+      }).catch(function (e) { $('#docList').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    }
+    return load();
+  };
+  /** 與後端 docToLines_ 相同規則：可扣抵時拆出進項稅額 */
+  function docLines(d, expense, pay, enabled) {
+    var total = Number(d.total) || 0, tax = Number(d.tax) || 0, party = d.sellerName || '';
+    var lines = [];
+    if (tax > 0 && tax < total && d.deductible && enabled['1191']) {
+      lines.push({ code: expense, debit: total - tax, party: party });
+      lines.push({ code: '1191', debit: tax, party: party });
+    } else lines.push({ code: expense, debit: total, party: party });
+    lines.push({ code: pay, credit: total, party: party });
+    return lines;
   }
 
   // ── 月底盤點 ──
@@ -1225,7 +1450,7 @@
     var role = S.boot.user.role;
     var h = '<div class="card help">';
     if (role === '助理') {
-      h += '<h3 style="margin-top:0">您可以做的事</h3><ul><li>「傳票」：選月份查看傳票，點一張傳票展開分錄。</li><li>「日記簿」：依日期區間查看所有分錄。</li><li>「變更密碼」：第一次登入請先改成自己的密碼。</li></ul><p class="muted">第二期會開放上傳發票、收據照片，由系統自動辨識。</p>';
+      h += '<h3 style="margin-top:0">您可以做的事</h3><ul><li>「傳票」：選月份查看傳票，點一張傳票展開分錄。</li><li>「日記簿」：依日期區間查看所有分錄。</li><li>「變更密碼」：第一次登入請先改成自己的密碼。</li></ul><p>「單據匣」：上傳發票、收據照片（可一次選多張），系統自動讀出內容，交給會計確認入帳。</p>';
     } else {
       h += '<h3 style="margin-top:0">每天／每週：記傳票</h3><ol>' +
         '<li>先看右上角是不是要記帳的那家公司（多家公司時可在右上角切換，頂端色條顏色代表公司）。</li>' +
@@ -1233,6 +1458,11 @@
         '<li>每一行選科目（可輸入代碼或名稱），填借方或貸方金額。按「＋ 加一行」會自動帶入差額。</li>' +
         '<li>借方合計等於貸方合計才能儲存。</li></ol>' +
         '<p class="muted small">常見分錄：營收入帳＝借 銀行存款／貸 餐飲收入、貸 銷項稅額；食材進貨＝借 食材及飲料進貨、借 進項稅額／貸 銀行存款或應付帳款；店租＝借 租金支出／貸 銀行存款。</p>' +
+        '<h3>發票、收據：單據匣</h3><ol>' +
+        '<li>「單據匣」按「選擇照片或 PDF」，可一次選多張；一張照片只拍一張單據。系統自動讀出日期、發票號碼、統編、金額。</li>' +
+        '<li>電子發票不用拍照：到財政部「電子發票整合服務平台」下載進項發票 CSV，按「匯入財政部進項發票檔」。同一張發票不會重複建立。</li>' +
+        '<li>每張單據選「付款方式」後按「產生傳票」，對照原始單據確認日期、金額、科目再儲存。手寫字容易認錯，一定要看過。</li>' +
+        '<li>傳票作廢後，單據會回到「待處理」，可以重新入帳。</li></ol>' +
         '<h3>每月底：盤點、鎖帳、看報表</h3><ol>' +
         '<li>「月底盤點」：輸入各存貨科目的盤點金額，系統自動產生調整傳票，算出本月真正的成本。</li>' +
         '<li>看「損益表」「資產負債表」，確認數字合理；可按「寫入試算表」把報表存到試算表分頁。</li>' +
