@@ -56,6 +56,9 @@ function books() {
 
 function b64(s) { return Buffer.from(s, 'utf8').toString('base64'); }
 const codes = (doc) => doc.issues.map((i) => i.code);
+const warnKeys = (doc) => doc.issues.filter((i) => i.level === '警示').map((i) => i.key);
+/** 依畫面核對當下的單據組入帳項目：帶版本號與核對過的警示 */
+const itemOf = (call, id, extra) => { const d = call('getDoc', { id }); return Object.assign({ id, rev: d.rev, ackWarnings: warnKeys(d) }, extra); };
 
 // ───────────── 純計算 ─────────────
 
@@ -169,7 +172,7 @@ test('上傳 → 原文另存 → 未判定不能入帳 → 人工校正 → 入
   assert.equal(d0.suggest, '5171');
   assert.equal(d0.src.total, '原文');
 
-  const first = call('postDocs', { items: [{ id: up.id, pay: '2131' }] });
+  const first = call('postDocs', { items: [{ id: up.id, rev: d0.rev, pay: '2131' }] });
   assert.equal(first.ok, 0);
   assert.match(first.results[0].error, /判定進項稅額/);
 
@@ -180,7 +183,7 @@ test('上傳 → 原文另存 → 未判定不能入帳 → 人工校正 → 入
   assert.equal(fixed.confirmedBy, 'admin');
   assert.equal(fixed.rev, d0.rev + 1);
 
-  const ok = call('postDocs', { items: [{ id: up.id, pay: '2131' }] });
+  const ok = call('postDocs', { items: [{ id: up.id, rev: fixed.rev, pay: '2131' }] });
   assert.equal(ok.ok, 1, JSON.stringify(ok.results));
   const v = call('getVoucher', { no: ok.results[0].no });
   assert.equal(v.source, '單據');
@@ -205,9 +208,9 @@ test('防重複入帳：同號發票只能入帳一次；改回待處理也擋�
   const da = call('getDoc', { id: a.id });
   assert.ok(codes(da).includes('DUP_PENDING'));
   // 有警示沒核對 → 不能入帳
-  const noAck = call('postDocs', { items: [{ id: a.id, pay: '1113', deductible: '可扣抵' }] });
+  const noAck = call('postDocs', { items: [{ id: a.id, rev: da.rev, pay: '1113', deductible: '可扣抵' }] });
   assert.match(noAck.results[0].error, /警示尚未核對/);
-  const ra = call('postDocs', { items: [{ id: a.id, pay: '1113', deductible: '可扣抵', ackWarnings: true }] });
+  const ra = call('postDocs', { items: [itemOf(call, a.id, { pay: '1113', deductible: '可扣抵' })] });
   assert.equal(ra.ok, 1);
   // B 改回待處理需要原因，改回後仍然不能入帳
   assert.throws(() => call('restoreDoc', { id: b.id }), /原因/);
@@ -215,13 +218,13 @@ test('防重複入帳：同號發票只能入帳一次；改回待處理也擋�
   const db = call('getDoc', { id: b.id });
   assert.ok(codes(db).includes('DUP_POSTED'));
   assert.equal(db.level, '錯誤');
-  const rb = call('postDocs', { items: [{ id: b.id, pay: '1113', deductible: '可扣抵', ackWarnings: true }] });
+  const rb = call('postDocs', { items: [itemOf(call, b.id, { pay: '1113', deductible: '可扣抵' })] });
   assert.match(rb.results[0].error, /已由 .* 入帳/);
   // 傳票編輯器路徑也擋得住
-  assert.throws(() => call('saveVoucher', { docId: b.id, deductible: '可扣抵', ackWarnings: true, date: '2026-10-28', type: '支出', lines: [{ code: '5171', debit: 10500 }, { code: '1113', credit: 10500 }] }), /已由/);
+  assert.throws(() => call('saveVoucher', { docId: b.id, rev: db.rev, deductible: '可扣抵', ackWarnings: warnKeys(db), date: '2026-10-28', type: '支出', lines: [{ code: '5171', debit: 10500 }, { code: '1113', credit: 10500 }] }), /已由/);
   // 作廢 A 之後，B 可以入帳
   call('voidVoucher', { no: ra.results[0].no, reason: '入錯單據' });
-  const rb2 = call('postDocs', { items: [{ id: b.id, pay: '1113', deductible: '可扣抵', ackWarnings: true }] });
+  const rb2 = call('postDocs', { items: [itemOf(call, b.id, { pay: '1113', deductible: '可扣抵' })] });
   assert.equal(rb2.ok, 1, JSON.stringify(rb2.results));
   // 疑似重複：沒有發票號碼、廠商日期金額相同
   upload(RECEIPT, 'r1.jpg');
@@ -253,7 +256,7 @@ test('批次入帳：每張都經過傳票驗證，一張失敗不影響其他�
   call('lockPeriod', { period: '2026-10' });
   call('unlockPeriod', { period: '2026-10', reason: '測試' });
   const docs = call('listDocs', {}).docs;
-  const items = docs.map((d) => ({ id: d.id, pay: '1113', deductible: d.hintSuggest, ackWarnings: true }));
+  const items = docs.map((d) => ({ id: d.id, rev: d.rev, pay: '1113', deductible: d.hintSuggest, ackWarnings: warnKeys(d) }));
   // 鎖住 10 月前先成功一張
   const one = call('postDocs', { items: [items[0]] });
   assert.equal(one.ok, 1);
@@ -314,7 +317,7 @@ test('多公司隔離：A 公司的單據在 B 公司查不到也入不了帳', 
   const up = upload(HANDWRITTEN, 'a.jpg');
   const b = call('createCompany', { name: '公版食品有限公司', industries: ['食品製造'] });
   assert.throws(() => call('getDoc', { id: up.id, _company: b.id }), /找不到單據/);
-  const r = call('postDocs', { _company: b.id, items: [{ id: up.id, pay: '1113', deductible: '不可扣抵', ackWarnings: true }] });
+  const r = call('postDocs', { _company: b.id, items: [{ id: up.id, rev: 1, pay: '1113', deductible: '不可扣抵', ackWarnings: [] }] });
   assert.match(r.results[0].error, /找不到單據/);
   assert.equal(call('listDocs', { _company: b.id }).docs.length, 0);
   assert.equal(call('listDocs', {}).docs.length, 1);
@@ -324,13 +327,48 @@ test('傳票編輯器路徑：自訂分錄仍須判定扣抵並通過傳票驗�
   const { call, upload } = books();
   const up = upload(RECEIPT, 'r.jpg');
   const lines = [{ code: '6171', debit: 3200 }, { code: '1111', credit: 3200 }];
-  assert.throws(() => call('saveVoucher', { docId: up.id, date: '2026-10-30', type: '支出', lines, ackWarnings: true }), /判定進項稅額/);
-  assert.throws(() => call('saveVoucher', { docId: up.id, deductible: '不可扣抵', ackWarnings: true, date: '2026-10-30', type: '支出', lines: [{ code: '6171', debit: 3200 }, { code: '1111', credit: 3000 }] }), /借貸/);
+  const cur = call('getDoc', { id: up.id });
+  const base = { docId: up.id, rev: cur.rev, ackWarnings: warnKeys(cur) };
+  assert.throws(() => call('saveVoucher', Object.assign({ date: '2026-10-30', type: '支出', lines }, base)), /判定進項稅額/);
+  assert.throws(() => call('saveVoucher', Object.assign({ deductible: '不可扣抵', date: '2026-10-30', type: '支出', lines: [{ code: '6171', debit: 3200 }, { code: '1111', credit: 3000 }] }, base)), /借貸/);
   const g = call('getDoc', { id: up.id, expense: '6171', pay: '1111', deductible: '不可扣抵' });
   assert.deepEqual(g.lines.map((l) => [l.code, l.debit, l.credit]), [['6171', 3200, 0], ['1111', 0, 3200]]);
-  const r = call('saveVoucher', { docId: up.id, deductible: '不可扣抵', ackWarnings: true, date: '2026-10-30', type: '支出', memo: g.memo, lines: g.lines });
+  const r = call('saveVoucher', Object.assign({ deductible: '不可扣抵', date: '2026-10-30', type: '支出', memo: g.memo, lines: g.lines }, base));
   assert.ok(r.no);
   assert.equal(call('getDoc', { id: up.id }).status, '已入帳');
+});
+
+test('Codex P1：核對後被別人改過的單據不能用舊版本入帳（單張、批次、傳票編輯器）', () => {
+  const { call, upload } = books();
+  const up = upload(RECEIPT, 'r.jpg');
+  const seen = call('getDoc', { id: up.id });
+  // 另一位會計把金額改成 6,400
+  call('updateDoc', { id: up.id, rev: seen.rev, fields: { total: 6400, net: 6400 } });
+  const r = call('postDocs', { items: [{ id: up.id, rev: seen.rev, pay: '1111', deductible: '不可扣抵', ackWarnings: warnKeys(seen) }] });
+  assert.equal(r.ok, 0);
+  assert.match(r.results[0].error, /被修改過/);
+  assert.throws(() => call('saveVoucher', { docId: up.id, rev: seen.rev, deductible: '不可扣抵', ackWarnings: warnKeys(seen), date: '2026-10-30', type: '支出', lines: [{ code: '6171', debit: 6400 }, { code: '1111', credit: 6400 }] }), /被修改過/);
+  assert.equal(call('postDocs', { items: [{ id: up.id, pay: '1111', deductible: '不可扣抵' }] }).ok, 0, '沒有版本號也拒絕');
+  assert.equal(call('getDoc', { id: up.id }).status, '待處理');
+  // 重新核對最新版本後才能入帳
+  assert.equal(call('postDocs', { items: [itemOf(call, up.id, { pay: '1111', deductible: '不可扣抵' })] }).ok, 1);
+});
+
+test('Codex P2：只核對過舊警示時，新出現的警示會擋下入帳', () => {
+  const { call, upload } = books();
+  const up = upload(RECEIPT, 'r.jpg');
+  const before = call('getDoc', { id: up.id });
+  const oldAck = warnKeys(before);
+  // 改了買方統編 → 新增「買方不是本公司」警示，但畫面上還沒顯示
+  const after = call('updateDoc', { id: up.id, rev: before.rev, fields: { buyerTaxId: OTHER } });
+  assert.ok(codes(after).includes('BUYER_NOT_OWN'));
+  const r = call('postDocs', { items: [{ id: up.id, rev: after.rev, pay: '1111', deductible: '不可扣抵', ackWarnings: oldAck }] });
+  assert.equal(r.ok, 0);
+  assert.match(r.results[0].error, /買方統編不是本公司/);
+  // 舊版的 true（不指定哪些警示）也不算核對
+  const legacy = call('postDocs', { items: [{ id: up.id, rev: after.rev, pay: '1111', deductible: '不可扣抵', ackWarnings: true }] });
+  assert.match(legacy.results[0].error, /警示尚未核對/);
+  assert.equal(call('postDocs', { items: [{ id: up.id, rev: after.rev, pay: '1111', deductible: '不可扣抵', ackWarnings: warnKeys(after) }] }).ok, 1);
 });
 
 test('沒有啟用 Drive API 時照樣存檔，標示辨識失敗', () => {

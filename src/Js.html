@@ -584,7 +584,7 @@
     $('#edSave', body).onclick = function () {
       var lines = collect().filter(function (l) { return l.code || l.debit || l.credit; });
       var payload = { no: editing ? v.no : '', date: $('#edDate', body).value, type: $('#edType', body).value, memo: $('#edMemo', body).value.trim(), lines: lines };
-      if (doc) { payload.docId = doc.id; payload.deductible = doc.deductible; payload.ackWarnings = !!doc.ackWarnings; }
+      if (doc) { payload.docId = doc.id; payload.deductible = doc.deductible; payload.rev = doc.rev; payload.ackWarnings = doc.ackWarnings || []; }
       $('#edErr', body).textContent = '';
       call('saveVoucher', payload).then(function (r) {
         closeModal();
@@ -676,6 +676,7 @@
     if (saved && codes.indexOf(saved) >= 0) return saved;
     return codes.indexOf('1111') >= 0 ? '1111' : codes[0] || '';
   }
+  function warnKeys(d) { return (d.issues || []).filter(function (i) { return i.level === '警示'; }).map(function (i) { return i.key; }); }
   function rememberPay(code) { try { window.localStorage.setItem('acct_pay_' + S.companyId, code); } catch (e) { /* 忽略 */ } }
 
   RENDER.docs = function (el) {
@@ -796,7 +797,7 @@
         if (warn && !$('#bAck').checked) { $('#bMsg').textContent = '請先核對警示並勾選'; return; }
         rememberPay(pay);
         var items = docs.map(function (d) {
-          return { id: d.id, expense: d.suggest, pay: pay, ackWarnings: !!warn, deductible: mode === 'hint' ? d.hintSuggest : mode === 'none' ? '不可扣抵' : d.deductible };
+          return { id: d.id, rev: d.rev, expense: d.suggest, pay: pay, ackWarnings: warn ? warnKeys(d) : [], deductible: mode === 'hint' ? d.hintSuggest : mode === 'none' ? '不可扣抵' : d.deductible };
         });
         var size = current.batchMax || 20, chunks = [];
         for (var i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
@@ -915,15 +916,33 @@
         if (!S.acctMap[exp]) { err.textContent = '請選擇費用科目'; return null; }
         var ack = $('#rvAck', body);
         if (ack && !ack.checked) { err.textContent = '請先對照原始單據核對警示，並勾選「我已核對」'; return null; }
-        return { deductible: c, expense: exp, pay: $('#rvPay', body).value, ackWarnings: !!ack };
+        return { deductible: c, expense: exp, pay: $('#rvPay', body).value, ack: !!(ack && ack.checked) };
+      }
+      /**
+       * 先存修改再入帳。改了單據欄位（或存檔後的警示和畫面上的不同）就停下來，
+       * 顯示最新檢查結果請使用者再確認一次：只能核對「看得到」的警示
+       */
+      function saveThenCheck() {
+        var shown = warnKeys(d).join(',');
+        var fieldEdit = Object.keys(changes()).some(function (k) { return k !== 'deductible' && k !== 'suggest'; });
+        return save(false).then(function (nd) {
+          if (fieldEdit || warnKeys(nd).join(',') !== shown) {
+            showReview(nd);
+            $('#rvErr').textContent = '已儲存修改並重新檢查，請看過最新的檢查結果後，再按一次「確認入帳」。';
+            return null;
+          }
+          return nd;
+        });
       }
       if ($('#rvPost', body)) $('#rvPost', body).onclick = function () {
         var p = readyToPost();
         if (!p) return;
         rememberPay(p.pay);
-        save(false).then(function () {
-          return call('postDocs', { items: [{ id: d.id, expense: p.expense, pay: p.pay, deductible: p.deductible, ackWarnings: p.ackWarnings }] });
+        saveThenCheck().then(function (nd) {
+          if (!nd) return null;
+          return call('postDocs', { items: [{ id: nd.id, rev: nd.rev, expense: p.expense, pay: p.pay, deductible: p.deductible, ackWarnings: p.ack ? warnKeys(nd) : [] }] });
         }).then(function (r) {
+          if (!r) return;
           var x = r.results[0];
           if (!x.ok) { err.textContent = x.error; return; }
           closeModal(); toast(d.id + ' 已入帳，傳票 ' + x.no); load();
@@ -932,10 +951,14 @@
       if ($('#rvEditor', body)) $('#rvEditor', body).onclick = function () {
         var p = readyToPost();
         if (!p) return;
-        save(false).then(function () {
-          return call('getDoc', { id: d.id, expense: p.expense, pay: p.pay, deductible: p.deductible });
+        var reviewed = null;
+        saveThenCheck().then(function (nd) {
+          if (!nd) return null;
+          reviewed = nd;
+          return call('getDoc', { id: nd.id, expense: p.expense, pay: p.pay, deductible: p.deductible });
         }).then(function (g) {
-          g.deductible = p.deductible; g.ackWarnings = p.ackWarnings;
+          if (!g) return;
+          g.deductible = p.deductible; g.rev = reviewed.rev; g.ackWarnings = p.ack ? warnKeys(reviewed) : [];
           voucherEditor({ date: g.date || today(), type: g.voucherType, memo: g.memo, lines: g.lines }, load, true, { doc: g });
         }).catch(function (e) { err.textContent = e.message; });
       };

@@ -58,8 +58,15 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     await page.click('#rvPost');
     await idle(page);
     if (!/判定進項稅額/.test(await page.textContent('#rvErr'))) fail('未判定扣抵時應擋下入帳');
+    // 改了欄位直接按確認：要先存檔、重新檢查、顯示最新結果，不能直接入帳（Codex P2）
+    await page.fill('[data-f="sellerName"]', '大成生鮮食品股份有限公司');
     await page.check('input[name="rvDed"][value="可扣抵"]');
     await page.selectOption('#rvPay', '2131');
+    await page.click('#rvPost');
+    await idle(page);
+    if (!/重新檢查/.test(await page.textContent('#rvErr'))) fail('改了欄位後應先重新檢查，不能直接入帳');
+    if ((await page.locator('.fld', { hasText: '賣方名稱' }).locator('.src').textContent()) !== '人工') fail('改過的欄位沒有標示人工');
+    if (!(await page.isChecked('input[name="rvDed"][value="可扣抵"]'))) fail('重新顯示後扣抵判定應保留');
     await page.screenshot({ path: path.join(shots, size.name + '-單據校正.png') });
     await page.click('#rvPost');
     await idle(page);

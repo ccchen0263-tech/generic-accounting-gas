@@ -1172,7 +1172,7 @@ function buildDocIndex_(docs) {
 function validateDoc_(d, ctx) {
   ctx = ctx || {};
   var out = [];
-  var add = function (code, level, field, msg) { out.push({ code: code, level: level, field: field || '', msg: msg }); };
+  var add = function (code, level, field, msg) { out.push({ code: code, level: level, field: field || '', msg: msg, key: code + '|' + (field || '') }); };
   var invoice = isInvoiceKind_(d.kind);
   var src = d.src || {};
   var open = d.status !== '已入帳' && d.status !== '略過';
@@ -1942,7 +1942,7 @@ HANDLERS.saveVoucher = function (p, s) {
     if (p.docId) {
       if (p.no) throw new Error('修改傳票時不能再連結單據');
       // 單據入帳一律走 postDocVoucher_：重新驗證、防重複、扣抵須人工判定，最後仍由 saveVoucherCore_ 檢查分錄
-      return postDocVoucher_({ docId: p.docId, lines: p.lines, date: p.date, type: p.type, memo: p.memo, deductible: p.deductible, ackWarnings: !!p.ackWarnings }, s);
+      return postDocVoucher_({ docId: p.docId, rev: p.rev, lines: p.lines, date: p.date, type: p.type, memo: p.memo, deductible: p.deductible, ackWarnings: p.ackWarnings }, s);
     }
     return saveVoucherCore_(p, s);
   });
@@ -3214,7 +3214,9 @@ HANDLERS.restoreDoc = function (p, s) {
 /**
  * 單據入帳的唯一入口（呼叫端必須已取得鎖）。
  * 重新讀取並驗證 → 有「錯誤」不能入帳 → 有「警示」須已核對 → 扣抵須人工判定 → 組分錄 → saveVoucherCore_ → 標記已入帳
- * p = { docId, expense, pay, deductible, ackWarnings, lines?, date?, type?, memo? }
+ * p = { docId, rev, expense, pay, deductible, ackWarnings: [核對過的警示 key], lines?, date?, type?, memo? }
+ *   rev：畫面核對時的版本；單據之後被別人改過（版本不同）就拒絕，避免用沒看過的資料入帳
+ *   ackWarnings：畫面上顯示並勾選核對的警示 key；目前的警示只要有一項不在清單內就拒絕
  *   lines 有給（傳票編輯器自己改過分錄）就用畫面的分錄，否則由伺服器依單據組分錄
  */
 function postDocVoucher_(p, s) {
@@ -3223,11 +3225,13 @@ function postDocVoucher_(p, s) {
   if (!d) throw new Error('找不到單據 ' + p.docId);
   if (d.status === DOC_STATUS.POSTED) throw new Error('單據 ' + d.id + ' 已經入帳（傳票 ' + d.voucherNo + '）');
   if (d.status === DOC_STATUS.SKIPPED) throw new Error('單據 ' + d.id + ' 已略過，請先改回待處理');
+  if (Number(p.rev) !== d.rev) throw new Error(d.id + ' 在你核對之後被修改過（版本 ' + p.rev + ' → ' + d.rev + '），請重新開啟核對後再入帳');
   checkDoc_(d, docCtx_(docs));
   var errs = d.issues.filter(function (i) { return i.level === '錯誤'; });
   if (errs.length) throw new Error(d.id + ' 不能入帳：' + errs.map(function (i) { return i.msg; }).join('；'));
-  var warns = d.issues.filter(function (i) { return i.level === '警示'; });
-  if (warns.length && !p.ackWarnings) throw new Error(d.id + ' 有 ' + warns.length + ' 項警示尚未核對：' + warns.map(function (i) { return i.msg; }).join('；'));
+  var acked = Array.isArray(p.ackWarnings) ? p.ackWarnings.map(String) : [];
+  var unacked = d.issues.filter(function (i) { return i.level === '警示' && acked.indexOf(i.key) < 0; });
+  if (unacked.length) throw new Error(d.id + ' 有 ' + unacked.length + ' 項警示尚未核對：' + unacked.map(function (i) { return i.msg; }).join('；'));
   var deductible = str_(p.deductible) || d.deductible;
   if (deductible !== '可扣抵' && deductible !== '不可扣抵') throw new Error(d.id + ' 請先判定進項稅額是否可扣抵');
 
@@ -3265,7 +3269,7 @@ HANDLERS.postDocs = function (p, s) {
   var results = items.map(function (it) {
     try {
       var r = withLock_(function () {
-        return postDocVoucher_({ docId: it.id, expense: it.expense, pay: it.pay, deductible: it.deductible, ackWarnings: !!it.ackWarnings }, s);
+        return postDocVoucher_({ docId: it.id, rev: it.rev, expense: it.expense, pay: it.pay, deductible: it.deductible, ackWarnings: it.ackWarnings }, s);
       });
       return { id: it.id, ok: true, no: r.no };
     } catch (e) {

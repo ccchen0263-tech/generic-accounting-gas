@@ -111,7 +111,7 @@ HANDLERS.saveVoucher = function (p, s) {
     if (p.docId) {
       if (p.no) throw new Error('修改傳票時不能再連結單據');
       // 單據入帳一律走 postDocVoucher_：重新驗證、防重複、扣抵須人工判定，最後仍由 saveVoucherCore_ 檢查分錄
-      return postDocVoucher_({ docId: p.docId, lines: p.lines, date: p.date, type: p.type, memo: p.memo, deductible: p.deductible, ackWarnings: !!p.ackWarnings }, s);
+      return postDocVoucher_({ docId: p.docId, rev: p.rev, lines: p.lines, date: p.date, type: p.type, memo: p.memo, deductible: p.deductible, ackWarnings: p.ackWarnings }, s);
     }
     return saveVoucherCore_(p, s);
   });

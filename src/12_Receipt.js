@@ -245,7 +245,7 @@ function buildDocIndex_(docs) {
 function validateDoc_(d, ctx) {
   ctx = ctx || {};
   var out = [];
-  var add = function (code, level, field, msg) { out.push({ code: code, level: level, field: field || '', msg: msg }); };
+  var add = function (code, level, field, msg) { out.push({ code: code, level: level, field: field || '', msg: msg, key: code + '|' + (field || '') }); };
   var invoice = isInvoiceKind_(d.kind);
   var src = d.src || {};
   var open = d.status !== '已入帳' && d.status !== '略過';
