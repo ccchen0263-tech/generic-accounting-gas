@@ -108,18 +108,12 @@ HANDLERS.saveVoucher = function (p, s) {
   return withLock_(function () {
     // 來源由系統決定，不接受畫面送來的值（避免偽裝成「月底盤點」等系統傳票）
     p.source = undefined;
-    var doc = null;
     if (p.docId) {
       if (p.no) throw new Error('修改傳票時不能再連結單據');
-      doc = docForVoucher_(p.docId);
-      p.source = '單據';
+      // 單據入帳一律走 postDocVoucher_：重新驗證、防重複、扣抵須人工判定，最後仍由 saveVoucherCore_ 檢查分錄
+      return postDocVoucher_({ docId: p.docId, rev: p.rev, lines: p.lines, date: p.date, type: p.type, memo: p.memo, deductible: p.deductible, ackWarnings: p.ackWarnings }, s);
     }
-    var r = saveVoucherCore_(p, s);
-    if (doc) {
-      markDocPosted_(doc, r.no, s);
-      log_(s.username, '單據入帳', doc.id + ' → 傳票 ' + r.no);
-    }
-    return r;
+    return saveVoucherCore_(p, s);
   });
 };
 

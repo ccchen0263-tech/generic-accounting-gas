@@ -100,6 +100,20 @@ function updateCells_(name, rowNumber, patch) {
   });
 }
 
+/**
+ * 整列更新：先讀出該列，再依標題把 obj 有的欄位換掉，一次寫回（比逐格寫快很多）
+ * obj 沒有的欄位保留原值
+ */
+function updateRow_(name, rowNumber, obj) {
+  var sh = sheet_(name);
+  var width = sh.getLastColumn();
+  var headers = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
+  var range = sh.getRange(rowNumber, 1, 1, width);
+  var row = range.getValues()[0];
+  headers.forEach(function (h, i) { if (Object.prototype.hasOwnProperty.call(obj, h)) row[i] = cellValue_(obj[h]); });
+  range.setValues([row]);
+}
+
 /** 刪除指定列（由下往上刪，連續列一次刪） */
 function deleteRowNumbers_(name, rowNumbers) {
   if (!rowNumbers.length) return;
