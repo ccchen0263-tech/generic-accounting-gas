@@ -29,7 +29,7 @@ const afterServer = `
   createUser_('helper', '小幫手', '成員'); setPassword_(findUser_('helper'), 'Help12345');
   var s = { username: 'admin', name: '管理者', role: '管理者' };
   CTX.company = loadCompanies_()[0];
-  HANDLERS.saveSettings({ companyName: '公版餐飲有限公司', taxId: '', industries: ['餐飲'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' }, s);
+  HANDLERS.saveSettings({ companyName: '公版餐飲有限公司', taxId: '53212539', industries: ['餐飲'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' }, s);
   HANDLERS.addByIndustry({ industries: ['餐飲'] }, s);
   HANDLERS.saveOpening({ rows: [
     { code: '1111', debit: 50000 }, { code: '1113', debit: 820000 }, { code: '1166', debit: 36000 },
@@ -56,6 +56,8 @@ const afterServer = `
   HANDLERS.uploadDoc({ name: '大成發票.jpg', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' }, s);
   __drive.ocrQueue.push('收 據\\n阿明水電行\\n日期：2026/02/08\\n冷氣清洗\\n合計 NT$ 3,200 元');
   HANDLERS.uploadDoc({ name: '水電收據.jpg', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' }, s);
+  __drive.ocrQueue.push('統一發票\\n某某商行\\nXY-11223344\\n2026/02/09\\n銷售額 1,000\\n稅額 50\\n總計 1,500');
+  HANDLERS.uploadDoc({ name: '金額對不上.jpg', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' }, s);
   HANDLERS.importInvoices({ fileName: '進項.csv', text: '發票狀態,發票號碼,發票日期,賣方統一編號,賣方名稱,買方統一編號,銷售額合計,營業稅,總計\\n已確認,CD11112222,115/02/05,22099131,中華電信股份有限公司,53212539,1000,50,1050\\n已確認,CD11113333,115/02/07,04595257,台灣電力股份有限公司,53212539,2000,100,2100' }, s);
   // 第二家公司：公版食品
   CTX.company = loadCompanies_()[0];

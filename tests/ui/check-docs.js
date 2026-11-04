@@ -1,5 +1,8 @@
 /**
- * 介面實測：單據匣 → 查看原始單據 → 產生傳票 → 儲存 → 傳票顯示「附單據」
+ * 介面實測（v0.4）：單據匣
+ *  1. 校正畫面：左邊原始單據、右邊欄位與來源標示、判定扣抵 → 確認入帳 → 分錄正確
+ *  2. 勾選兩張財政部發票 → 批次確認入帳
+ *  3. 金額對不上的單據出現在「異常」分頁，而且不能勾選
  * 桌機與手機各跑一次。用法：node tests/ui/build-preview.js && node tests/ui/check-docs.js
  */
 const path = require('path');
@@ -19,60 +22,85 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
     const fail = (m) => problems.push(size.name + '：' + m);
+    const nav = async (id) => {
+      if (size.width < 900) { await page.click('#menuBtn'); await page.waitForTimeout(250); }
+      await page.click(`#nav a[data-page="${id}"]`);
+      await idle(page);
+    };
+    const wide = async (label) => {
+      const w = await page.evaluate(() => Math.max(document.documentElement.scrollWidth, ...Array.from(document.querySelectorAll('#modal:not([hidden]) *, #main *')).filter((e) => !e.closest('.table-wrap') && !e.closest('[hidden]') && e.getBoundingClientRect().width > 0).map((e) => Math.ceil(e.getBoundingClientRect().right))));
+      if (w > size.width) fail(label + ' 超出畫面寬度 ' + w);
+    };
     await page.goto(url);
     await page.fill('#loginUser', 'acct');
     await page.fill('#loginPass', 'Acct12345');
     await page.click('#loginBtn');
     await page.waitForSelector('#app:not([hidden])');
     await idle(page);
-    if (size.width < 900) { await page.click('#menuBtn'); await page.waitForTimeout(250); }
-    await page.click('#nav a[data-page="docs"]');
-    await idle(page);
-    await page.waitForSelector('#docList .voucher');
-    const count = await page.$$eval('#docList .voucher', (x) => x.length);
-    if (count !== 4) fail('待處理應有 4 張，實際 ' + count);
-    const tab = await page.textContent('#docTabs .chip.on');
-    if (!/待處理\s*4/.test(tab)) fail('分頁數字不對：' + tab);
+    await nav('docs');
+    await page.waitForSelector('#docList .doc-row');
+    const count = await page.$$eval('#docList .doc-row', (x) => x.length);
+    if (count !== 5) fail('待處理應有 5 張，實際 ' + count);
 
-    // 找拍照上傳的大成發票
-    const card = page.locator('#docList .voucher', { hasText: '大成生鮮' });
-    await card.locator('.voucher-head').click();
-    await card.locator('[data-act="file"]').click();
+    // 1. 校正畫面
+    await page.locator('#docList .doc-row', { hasText: '大成生鮮' }).locator('.doc-open').click();
+    await page.waitForSelector('#modal:not([hidden]) .review');
     await idle(page);
-    if (!(await card.locator('.doc-view img.doc-img').count())) fail('看不到原始單據圖片');
-    await card.locator('[data-pay]').selectOption('2131');
-    await card.locator('[data-act="post"]').click();
-    await page.waitForSelector('#modal:not([hidden]) #edSave');
-    const title = await page.textContent('#modalTitle');
-    if (!/單據入帳 D/.test(title)) fail('對話框標題不對：' + title);
-    const lines = await page.$$eval('#edLines .line:not(.head)', (rows) => rows.map((r) => [r.querySelector('.l-acct').value, r.querySelector('.l-dr').value, r.querySelector('.l-cr').value]));
-    const want = [['5171 食材及飲料進貨', '10000', ''], ['1191 進項稅額', '500', ''], ['2131 應付帳款', '', '10500']];
-    if (JSON.stringify(lines) !== JSON.stringify(want)) fail('建議分錄不對：' + JSON.stringify(lines));
-    if ((await page.inputValue('#edDate')) !== '2026-02-06') fail('日期沒有帶入');
-    if ((await page.inputValue('#edType')) !== '轉帳') fail('月結應為轉帳傳票');
-    await page.click('#edDocBtn');
+    if (!(await page.locator('#rvFile img.doc-img').count())) fail('校正畫面左邊沒有原始單據');
+    const srcs = await page.$$eval('.review-form .src', (x) => x.map((e) => e.textContent));
+    if (!srcs.includes('原文')) fail('欄位沒有標示來源：' + srcs.join(','));
+    if (await page.inputValue('[data-f="total"]') !== '10500') fail('總金額沒有帶入');
+    if (!/與總額相符/.test(await page.textContent('#rvSum'))) fail('金額核對沒有顯示相符');
+    const layout = await page.evaluate(() => { const a = document.querySelector('.review-src').getBoundingClientRect(), b = document.querySelector('.review-form').getBoundingClientRect(); return { side: b.left > a.right - 1, stacked: b.top >= a.bottom - 1 }; });
+    if (size.width >= 900 && !layout.side) fail('桌機應左右並排');
+    if (size.width < 900 && !layout.stacked) fail('手機應上下排列');
+    await wide('校正畫面');
+    await page.click('#rvPost');
     await idle(page);
-    if (!(await page.locator('#edDocView img').count())) fail('入帳畫面看不到原始單據');
-    await page.screenshot({ path: path.join(shots, size.name + '-單據入帳.png'), fullPage: true });
-    await page.click('#edSave');
+    if (!/判定進項稅額/.test(await page.textContent('#rvErr'))) fail('未判定扣抵時應擋下入帳');
+    await page.check('input[name="rvDed"][value="可扣抵"]');
+    await page.selectOption('#rvPay', '2131');
+    await page.screenshot({ path: path.join(shots, size.name + '-單據校正.png') });
+    await page.click('#rvPost');
     await idle(page);
     await page.waitForSelector('#modal', { state: 'hidden' });
-    await page.waitForTimeout(100);
-    const left = await page.$$eval('#docList .voucher', (x) => x.length);
-    if (left !== 3) fail('入帳後待處理應剩 3 張，實際 ' + left);
-
-    if (size.width < 900) { await page.click('#menuBtn'); await page.waitForTimeout(250); }
-    await page.click('#nav a[data-page="vouchers"]');
     await idle(page);
+    const left = await page.$$eval('#docList .doc-row', (x) => x.length);
+    if (left !== 4) fail('入帳後待處理應剩 4 張，實際 ' + left);
+
+    // 2. 批次確認
+    for (const who of ['中華電信', '台灣電力']) await page.locator('#docList .doc-row', { hasText: who }).locator('[data-pick]').check();
+    await page.waitForSelector('#batchBar:not([hidden])');
+    if (!/已選 2 張/.test(await page.textContent('#batchBar'))) fail('批次列沒有顯示已選 2 張');
+    await page.selectOption('#bPay', '1113');
+    await page.selectOption('#bDed', 'hint');
+    if (await page.locator('#bAck').count()) await page.check('#bAck');
+    await wide('批次列');
+    await page.click('#bGo');
+    await idle(page);
+    await page.waitForSelector('#docList .notice');
+    const note = await page.textContent('#docList .notice');
+    if (!/入帳 2 張/.test(note)) fail('批次入帳結果不對：' + note);
+
+    // 3. 異常分頁
+    await page.click('#docTabs .chip[data-st="異常"]');
+    await idle(page);
+    const bad = page.locator('#docList .doc-row', { hasText: '某某商行' });
+    if (!(await bad.count())) fail('金額對不上的單據沒有出現在異常分頁');
+    else if (await bad.locator('[data-pick]').count()) fail('有錯誤的單據不應該能勾選');
+
+    await nav('vouchers');
     await page.waitForSelector('#vList .voucher');
-    const badge = await page.locator('#vList .voucher', { hasText: '大成生鮮' }).locator('.badge.open').count();
-    if (!badge) fail('傳票沒有顯示「附單據」');
-    const wide = await page.evaluate(() => document.documentElement.scrollWidth);
-    if (wide > size.width) fail('畫面超出寬度 ' + wide);
+    const card = page.locator('#vList .voucher', { hasText: '大成生鮮' });
+    if (!(await card.locator('.badge.open').count())) fail('傳票沒有顯示「附單據」');
+    await card.locator('.voucher-head').click();
+    const cells = await card.locator('tbody tr').allInnerTexts();
+    const flat = cells.map((t) => t.replace(/\s+/g, ' ')).join(' | ');
+    if (!/5171.*10,000/.test(flat) || !/1191.*500/.test(flat) || !/2131.*10,500/.test(flat)) fail('入帳分錄不對：' + flat);
     errors.forEach((e) => fail('JS 錯誤：' + e));
     await page.close();
   }
   await browser.close();
   if (problems.length) { console.log(problems.join('\n')); process.exit(1); }
-  console.log('單據匣流程通過：上傳的單據可查看原檔、帶入建議分錄、入帳後連結到傳票（桌機、手機）');
+  console.log('單據匣流程通過：校正畫面（左右並排／手機上下）、扣抵判定、確認入帳、批次入帳、異常分頁（桌機、手機）');
 })();

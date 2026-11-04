@@ -61,15 +61,16 @@ function parseReceiptText_(text, own) {
   var raw = String(text || '');
   var lines = raw.split(/\r?\n/).map(function (l) { return l.replace(/　/g, ' ').trim(); }).filter(String);
   var flat = lines.join('\n');
-  var out = { kind: '其他', invoiceNo: '', date: '', sellerName: '', sellerTaxId: '', buyerTaxId: '', net: 0, tax: 0, total: 0 };
+  var out = { kind: '其他', invoiceNo: '', date: '', sellerName: '', sellerTaxId: '', buyerTaxId: '', net: 0, tax: 0, total: 0, src: {} };
 
   // 發票號碼：兩個英文字母 + 8 碼數字
   var inv = /(^|[^A-Z])([A-Z]{2})\s*[-－]?\s*(\d{8})(?!\d)/.exec(flat.toUpperCase());
-  if (inv) out.invoiceNo = inv[2] + inv[3];
+  if (inv) { out.invoiceNo = inv[2] + inv[3]; out.src.invoiceNo = '原文'; }
 
   // 日期：先找年月日格式，再找連續數字
   var dm = /(\d{2,4})\s*[\/\-.年]\s*(\d{1,2})\s*[\/\-.月]\s*(\d{1,2})/g, d;
   while ((d = dm.exec(flat)) && !out.date) out.date = toIsoDate_(d[1], d[2], d[3]);
+  if (out.date) out.src.date = '原文';
 
   // 統編：8 碼且檢查碼正確；等於本公司的是買方，其他第一個是賣方
   var ids = [];
@@ -98,31 +99,40 @@ function parseReceiptText_(text, own) {
     if (ownName && l.indexOf(ownName) >= 0) return false;
     return !/(統一發票|電子發票|買受人|地址|電話)/.test(l);
   })[0];
+  // 找不到公司名稱時：短短一行、以「行、店、社、坊、館、廠」結尾的店名（收據常見）
+  if (!nameLine) nameLine = lines.filter(function (l) {
+    return l.length <= 20 && !/\d/.test(l) && /(行|店|社|坊|館|廠|商號)$/.test(l) && (!ownName || l.indexOf(ownName) < 0) && !/(銀行|發票|收據)/.test(l);
+  })[0];
   if (nameLine) out.sellerName = nameLine.replace(/^(賣方|營業人|名稱|店名)[:：\s]*/, '').replace(/(統一編號|統編|賣方)[\s\S]*$/, '').trim().slice(0, 40);
+  if (out.sellerName) out.src.sellerName = '原文';
+  if (out.sellerTaxId) out.src.sellerTaxId = '原文';
+  if (out.buyerTaxId) out.src.buyerTaxId = '原文';
 
-  // 金額
+  // 金額：讀到的保持原值（不互相覆蓋），對不上的交給 validateDoc_ 警示
+  var src = out.src;
   var total = amountAfter_(lines, ['總計', '合計', '總金額', '含稅', '應付', '實收', '金額合計', '總額', 'TOTAL', 'Total'], ['未稅', '銷售額', '稅額']);
   var tax = amountAfter_(lines, ['營業稅', '稅額', '稅金', 'TAX', 'Tax'], ['免稅', '零稅率', '含稅']);
   var net = amountAfter_(lines, ['銷售額', '未稅', '小計'], ['稅額']);
-  if (isNaN(total) && !isNaN(net) && !isNaN(tax)) total = net + tax;
-  if (!isNaN(total) && !isNaN(tax) && isNaN(net)) net = total - tax;
-  if (!isNaN(total) && !isNaN(net) && isNaN(tax) && total > net) tax = total - net;
-  if (!isNaN(tax) && !isNaN(total) && tax >= total) tax = NaN;
+  if (!isNaN(tax) && !isNaN(total) && tax >= total) tax = NaN; // 稅額不可能大於總額：視為讀錯
+  if (!isNaN(total)) src.total = '原文';
+  if (!isNaN(tax)) src.tax = '原文';
+  if (!isNaN(net)) src.net = '原文';
+  if (isNaN(total) && !isNaN(net) && !isNaN(tax)) { total = net + tax; src.total = '推算'; }
+  if (!isNaN(total) && !isNaN(tax) && isNaN(net)) { net = total - tax; src.net = '推算'; }
+  if (!isNaN(total) && !isNaN(net) && isNaN(tax) && total >= net) { tax = total - net; src.tax = '推算'; }
   out.total = isNaN(total) ? 0 : total;
   out.tax = isNaN(tax) ? 0 : tax;
-  out.net = out.total ? out.total - out.tax : (isNaN(net) ? 0 : net);
+  out.net = isNaN(net) ? 0 : net;
 
   // 種類
   if (out.invoiceNo) out.kind = out.buyerTaxId ? '統一發票（有統編）' : '統一發票';
   else if (/收\s*據/.test(flat)) out.kind = '收據';
-  // 有統編的三聯式只讀到總額：依 5% 拆出稅額
-  if (out.invoiceNo && out.buyerTaxId && out.total && !out.tax) {
-    var sp = splitTax_(out.total);
-    out.net = sp.net; out.tax = sp.tax;
+  // 只讀到總額：有統編的發票依 5% 拆稅額，其他視為含稅總額（標示「推算」，需人工確認）
+  if (out.total && isNaN(net) && isNaN(tax)) {
+    if (out.invoiceNo && out.buyerTaxId) { var sp = splitTax_(out.total); out.net = sp.net; out.tax = sp.tax; }
+    else { out.net = out.total; out.tax = 0; }
+    src.net = '推算'; src.tax = '推算';
   }
-  // 沒有統編的發票或收據，進項稅額不能扣抵：全部算在費用
-  if (!out.buyerTaxId) { out.net = out.total || out.net; out.tax = 0; }
-  if (!out.total) out.total = out.net + out.tax;
   return out;
 }
 
@@ -171,15 +181,16 @@ var PAY_ACCOUNTS = [
 ];
 
 /**
- * 單據 → 建議分錄。可扣抵（有統編的發票、財政部進項發票）且 1191 進項稅額已啟用時，拆成費用＋進項稅額。
- * doc = { total, tax, sellerName, invoiceNo, deductible }
+ * 單據 → 建議分錄。只有「扣抵判定＝可扣抵」（人工判定）且 1191 進項稅額已啟用時，才拆成費用＋進項稅額；
+ * 其他情況整張金額記入費用。
+ * doc = { total, tax, sellerName, invoiceNo, deductible: '未判定'｜'可扣抵'｜'不可扣抵' }
  */
 function docToLines_(doc, expenseCode, payCode, enabledCodes) {
   var total = Number(doc.total) || 0;
   var tax = Number(doc.tax) || 0;
   var party = str_(doc.sellerName);
   var lines = [];
-  if (tax > 0 && tax < total && doc.deductible && enabledCodes['1191']) {
+  if (tax > 0 && tax < total && doc.deductible === '可扣抵' && enabledCodes['1191']) {
     lines.push({ code: expenseCode, debit: total - tax, credit: 0, party: party });
     lines.push({ code: '1191', debit: tax, credit: 0, party: party });
   } else {
@@ -192,6 +203,113 @@ function docToLines_(doc, expenseCode, payCode, enabledCodes) {
 /** 單據摘要：賣方＋發票號碼 */
 function docMemo_(doc) {
   return [str_(doc.sellerName) || str_(doc.kind) || '單據', str_(doc.invoiceNo)].filter(String).join(' ');
+}
+
+/** 解析規則版本：規則改了就加 1，舊單據可用「重新解析」套用新規則 */
+var PARSER_VERSION = 2;
+
+// ───────────── 單據驗證 ─────────────
+
+var DOC_LEVELS = ['正常', '提示', '警示', '錯誤'];
+var DEDUCT_STATES = ['未判定', '可扣抵', '不可扣抵'];
+/** 依營業稅法第 19 條，進項稅額通常不得扣抵的科目（交際費、職工福利、伙食費）；正式使用前請記帳士確認 */
+var NON_DEDUCTIBLE_CODES = ['6211', '6281', '6271'];
+var DOC_FIELDS = ['kind', 'date', 'invoiceNo', 'sellerName', 'sellerTaxId', 'buyerTaxId', 'net', 'tax', 'total'];
+var DOC_FIELD_NAMES = { kind: '種類', date: '日期', invoiceNo: '發票號碼', sellerName: '賣方名稱', sellerTaxId: '賣方統編', buyerTaxId: '買方統編', net: '未稅金額', tax: '稅額', total: '總金額' };
+
+function isInvoiceKind_(kind) { return /發票/.test(str_(kind)); }
+
+/** 疑似重複的比對鍵：沒有發票號碼時，用賣方＋日期＋總額 */
+function suspectKey_(d) {
+  var who = str_(d.sellerTaxId) || str_(d.sellerName);
+  return who && d.date && d.total ? who + '|' + d.date + '|' + d.total : '';
+}
+
+/** 一次建立索引，避免每張單據都掃描全部單據 */
+function buildDocIndex_(docs) {
+  var byInv = {}, bySuspect = {};
+  docs.forEach(function (d) {
+    if (d.status === '略過') return;
+    if (d.invoiceNo) (byInv[d.invoiceNo] = byInv[d.invoiceNo] || []).push(d);
+    var k = suspectKey_(d);
+    if (k && !d.invoiceNo) (bySuspect[k] = bySuspect[k] || []).push(d);
+  });
+  return { byInv: byInv, bySuspect: bySuspect };
+}
+
+/**
+ * 檢查一張單據，回傳問題清單 [{code, level, field, msg}]。
+ * level：錯誤＝不能入帳；警示＝入帳前要核對；提示＝參考
+ * ctx = { ownTaxId, openingDate, lockedPeriods, today, index }
+ */
+function validateDoc_(d, ctx) {
+  ctx = ctx || {};
+  var out = [];
+  var add = function (code, level, field, msg) { out.push({ code: code, level: level, field: field || '', msg: msg }); };
+  var invoice = isInvoiceKind_(d.kind);
+  var src = d.src || {};
+  var open = d.status !== '已入帳' && d.status !== '略過';
+
+  if (!d.date || !isValidDate_(d.date)) add('MISSING_DATE', '錯誤', 'date', '缺少日期');
+  if (!(Number(d.total) > 0)) add('MISSING_TOTAL', '錯誤', 'total', '缺少總金額');
+  if (invoice && !d.invoiceNo) add('MISSING_INVOICE_NO', '警示', 'invoiceNo', '發票缺少發票號碼');
+  if (d.invoiceNo && !/^[A-Z]{2}\d{8}$/.test(d.invoiceNo)) add('INVOICE_NO_FORMAT', '警示', 'invoiceNo', '發票號碼格式應為 2 個英文字母＋8 碼數字');
+  if (invoice && !d.sellerTaxId) add('MISSING_SELLER_TAXID', '警示', 'sellerTaxId', '發票缺少賣方統編');
+  if (!d.sellerName && !d.sellerTaxId) add('MISSING_SELLER', '警示', 'sellerName', '缺少賣方（廠商）名稱');
+
+  var net = Number(d.net) || 0, tax = Number(d.tax) || 0, total = Number(d.total) || 0;
+  if (total > 0 && Math.abs(net + tax - total) > 1) add('AMOUNT_MISMATCH', '錯誤', 'total', '未稅 ' + net + ' ＋ 稅額 ' + tax + ' ≠ 總額 ' + total);
+  else if (tax > 0 && net > 0 && Math.abs(tax - Math.round(net * 0.05)) > 1) add('TAX_RATE', '警示', 'tax', '稅額 ' + tax + ' 與未稅 × 5%（' + Math.round(net * 0.05) + '）不符');
+  if (d.sellerTaxId && !isValidTaxId_(d.sellerTaxId)) add('TAXID_INVALID', '警示', 'sellerTaxId', '賣方統編檢查碼不正確');
+  if (d.buyerTaxId && !isValidTaxId_(d.buyerTaxId)) add('TAXID_INVALID', '警示', 'buyerTaxId', '買方統編檢查碼不正確');
+  if (d.buyerTaxId && ctx.ownTaxId && d.buyerTaxId !== ctx.ownTaxId) add('BUYER_NOT_OWN', '警示', 'buyerTaxId', '買方統編不是本公司（' + ctx.ownTaxId + '），進項稅額不得扣抵');
+
+  if (d.date && isValidDate_(d.date) && open) {
+    if (ctx.today && d.date > ctx.today) add('DATE_FUTURE', '錯誤', 'date', '日期在今天之後');
+    if (ctx.openingDate && d.date < ctx.openingDate) add('DATE_BEFORE_OPENING', '錯誤', 'date', '日期早於開帳日 ' + ctx.openingDate);
+    if (ctx.lockedPeriods && ctx.lockedPeriods[d.date.slice(0, 7)]) add('PERIOD_LOCKED', '錯誤', 'date', d.date.slice(0, 7) + ' 已鎖帳');
+  }
+
+  var idx = ctx.index || { byInv: {}, bySuspect: {} };
+  if (d.invoiceNo) {
+    var same = (idx.byInv[d.invoiceNo] || []).filter(function (x) { return x.id !== d.id; });
+    var posted = same.filter(function (x) { return x.status === '已入帳'; })[0];
+    if (posted) add('DUP_POSTED', '錯誤', 'invoiceNo', '發票 ' + d.invoiceNo + ' 已由 ' + posted.id + ' 入帳（傳票 ' + posted.voucherNo + '）');
+    else if (same.length && open) add('DUP_PENDING', '警示', 'invoiceNo', '發票 ' + d.invoiceNo + ' 另有單據 ' + same.map(function (x) { return x.id; }).join('、'));
+  } else {
+    var k = suspectKey_(d);
+    var sus = k ? (idx.bySuspect[k] || []).filter(function (x) { return x.id !== d.id; }) : [];
+    if (sus.length && open) add('DUP_SUSPECT', '警示', 'total', '疑似重複：與 ' + sus.map(function (x) { return x.id; }).join('、') + ' 的廠商、日期、金額相同');
+  }
+
+  if (src._ocr === 'failed') add('OCR_FAILED', '警示', '', '文字辨識失敗，請對照原始單據手動輸入');
+  else if (src._ocr === 'weak') add('OCR_WEAK', '警示', '', '辨識出的文字很少或讀不到金額、日期，請對照原始單據');
+  var derived = DOC_FIELDS.filter(function (f) { return src[f] === '推算'; });
+  if (derived.length) add('DERIVED', '提示', derived[0], derived.map(function (f) { return DOC_FIELD_NAMES[f]; }).join('、') + ' 是系統推算的，請核對');
+  return out;
+}
+
+function docLevel_(issues) {
+  var lv = 0;
+  (issues || []).forEach(function (i) { var n = DOC_LEVELS.indexOf(i.level); if (n > lv) lv = n; });
+  return DOC_LEVELS[lv];
+}
+
+/**
+ * 進項稅額扣抵「建議」（不會自動套用）：全部條件都符合才建議可扣抵。
+ * 不能只看買方統編：還要看公司稅別、單據種類、稅額、費用科目。
+ */
+function deductibleHint_(d, settings, expenseCode) {
+  var reasons = [];
+  var own = str_(settings.taxId);
+  if (!own) reasons.push('公司設定沒有填統一編號，無法核對買方');
+  else if (d.buyerTaxId !== own) reasons.push(d.buyerTaxId ? '買方統編不是本公司' : '單據上沒有本公司統編');
+  if (settings.vatType !== '一般稅額') reasons.push('公司營業稅類型不是一般稅額');
+  if (!isInvoiceKind_(d.kind)) reasons.push('不是統一發票（收據等不能扣抵）');
+  if (!(Number(d.tax) > 0)) reasons.push('沒有稅額');
+  if (expenseCode && NON_DEDUCTIBLE_CODES.indexOf(expenseCode) >= 0) reasons.push('科目 ' + expenseCode + ' 依法通常不得扣抵');
+  if (reasons.length) return { suggest: '不可扣抵', reason: reasons.join('；') };
+  return { suggest: '可扣抵', reason: '買方為本公司、一般稅額、統一發票、有稅額；請確認用途為營業使用' };
 }
 
 // ───────────── 財政部進項發票檔 ─────────────

@@ -153,8 +153,48 @@
   details.ocr { margin-top: 8px; font-size: 13px; }
   details.ocr summary { cursor: pointer; color: var(--muted); }
   .ocr-text { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); padding: 10px; border-radius: 8px; max-height: 240px; overflow: auto; font-size: 13px; margin: 6px 0 0; }
-  .pay-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-  .pay-pick select { width: auto; }
+  .modal-card.wide { max-width: 1240px; }
+  .review { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+  .review-src { position: sticky; top: 0; min-width: 0; }
+  .review-src .doc-img { max-height: 76vh; margin-top: 0; }
+  .review-form { min-width: 0; }
+  .rv-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-bottom: 8px; }
+  .rv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin: 10px 0; }
+  .fld span { display: inline-flex; gap: 6px; align-items: center; }
+  .fld.bad input, .fld.bad select { border-color: var(--danger); background: var(--danger-soft); }
+  .src { display: inline-block; border-radius: 6px; padding: 0 6px; font-size: 11px; line-height: 18px; white-space: nowrap; }
+  .src-ocr { background: var(--good-soft); color: var(--good); }
+  .src-import { background: var(--primary-soft); color: var(--primary); }
+  .src-derived { background: var(--warn-soft); color: var(--warn); }
+  .src-manual { background: #ece8f7; color: #4b3a8f; }
+  .src-none { background: #eceff1; color: #607d8b; }
+  .issues { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+  .issues li { border-radius: 8px; padding: 6px 10px; }
+  .issues li.lv-void { background: var(--danger-soft); color: var(--danger); }
+  .issues li.lv-auto { background: var(--warn-soft); color: var(--warn); }
+  .issues li.lv-lock { background: #f1f3f4; color: #455a64; }
+  .issue-ok { color: var(--good); font-size: 13px; margin: 0 0 8px; }
+  .check input[type='radio'], .check input[type='checkbox'] { width: auto; flex: 0 0 auto; }
+  fieldset.ded { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 10px; margin: 6px 0 10px; }
+  fieldset.ded legend { font-size: 13px; color: var(--muted); padding: 0 4px; }
+  .doc-row { display: flex; align-items: stretch; border: 1px solid var(--line); border-left-width: 4px; border-radius: var(--radius); background: var(--surface); margin-bottom: 8px; }
+  .doc-row.lvl-void { border-left-color: var(--danger); }
+  .doc-row.lvl-auto { border-left-color: #e0a526; }
+  .doc-pick { display: flex; align-items: center; padding: 0 0 0 12px; }
+  .doc-pick input { width: 18px; height: 18px; }
+  .doc-open { flex: 1 1 auto; min-width: 0; appearance: none; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 10px 14px; }
+  .doc-open .no { font-family: var(--mono); font-weight: 600; }
+  .doc-open .memo { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+  .pick-all { margin: 0 0 8px 4px; }
+  .batch-bar { position: sticky; top: 64px; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-end; background: var(--primary-soft); border: 1px solid #b9dcd5; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; }
+  .batch-bar select { width: auto; max-width: 100%; }
+  .batch-bar label:not(.check) { min-width: 0; }
+  @media (max-width: 900px) {
+    .review { grid-template-columns: minmax(0, 1fr); }
+    .review-src { position: static; }
+    .rv-grid { grid-template-columns: minmax(0, 1fr); }
+    .batch-bar { top: 104px; }
+  }
 
   .lines { display: grid; gap: 8px; }
   .line { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1.1fr) 36px; gap: 8px; align-items: center; }
@@ -392,7 +432,7 @@
     lastFocus = document.activeElement;
     $('#modalTitle').textContent = title;
     $('#modalBody').innerHTML = html;
-    $('.modal-card').className = 'modal-card' + (opts.narrow ? ' narrow' : '');
+    $('.modal-card').className = 'modal-card' + (opts.narrow ? ' narrow' : '') + (opts.wide ? ' wide' : '');
     $('#modal').hidden = false;
     var first = $('#modalBody input, #modalBody select, #modalBody textarea, #modalBody button');
     if (first) first.focus();
@@ -745,7 +785,7 @@
     var body = openModal(title,
       '<datalist id="acctList">' + acctOptions() + '</datalist>' +
       (doc ? '<div class="notice info">已依單據自動帶入科目與金額，<b>請對照原始單據確認</b>日期、金額、科目後再儲存。' +
-        (doc.date ? '' : '<br>單據上的日期沒有辨識出來，請自己填。') + (doc.total ? '' : '<br>金額沒有辨識出來，請自己填。') +
+        '<br>進項稅額：<b>' + esc(doc.deductible) + '</b>（在校正畫面判定）。' + (doc.date ? '' : '<br>單據上的日期沒有辨識出來，請自己填。') + (doc.total ? '' : '<br>金額沒有辨識出來，請自己填。') +
         (doc.hasFile ? ' <button class="btn small" type="button" id="edDocBtn">顯示原始單據</button><div id="edDocView"></div>' : '') + '</div>' : '') +
       (tpls.length ? '<div class="tpl-bar"><label class="grow">常用範本（選了會自動帶科目）<select id="edTpl"><option value="">（不套用，自己輸入）</option>' +
         tpls.map(function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>'; }).join('') + '</select></label>' +
@@ -859,7 +899,7 @@
     $('#edSave', body).onclick = function () {
       var lines = collect().filter(function (l) { return l.code || l.debit || l.credit; });
       var payload = { no: editing ? v.no : '', date: $('#edDate', body).value, type: $('#edType', body).value, memo: $('#edMemo', body).value.trim(), lines: lines };
-      if (doc) payload.docId = doc.id;
+      if (doc) { payload.docId = doc.id; payload.deductible = doc.deductible; payload.ackWarnings = !!doc.ackWarnings; }
       $('#edErr', body).textContent = '';
       call('saveVoucher', payload).then(function (r) {
         closeModal();
@@ -927,26 +967,58 @@
     });
   }
   var DOC_BADGE = { '待處理': 'auto', '重複': 'void', '已入帳': 'open', '略過': 'lock' };
+  var LEVEL_BADGE = { '錯誤': 'void', '警示': 'auto', '提示': 'lock', '正常': 'open' };
+  var SRC_CLASS = { '原文': 'ocr', '推算': 'derived', '匯入': 'import', '人工': 'manual' };
+  var DOC_FIELDS_UI = [
+    ['date', '日期', 'date'], ['invoiceNo', '發票號碼', 'text'], ['sellerName', '賣方名稱', 'text'], ['sellerTaxId', '賣方統編', 'text'],
+    ['buyerTaxId', '買方統編', 'text'], ['net', '未稅金額', 'num'], ['tax', '稅額', 'num'], ['total', '總金額', 'num']
+  ];
+  function srcBadge(src) {
+    if (!src) return '<span class="src src-none">未讀到</span>';
+    return '<span class="src src-' + (SRC_CLASS[src] || 'none') + '">' + esc(src) + '</span>';
+  }
+  function issueList(issues) {
+    if (!issues || !issues.length) return '<p class="issue-ok">檢查通過，沒有發現問題。</p>';
+    return '<ul class="issues">' + issues.map(function (i) {
+      return '<li class="lv-' + (LEVEL_BADGE[i.level] || 'lock') + '"><b>' + esc(i.level) + '</b> ' + esc(i.msg) + '</li>';
+    }).join('') + '</ul>';
+  }
+  function payDefault(pays, d) {
+    var saved = null;
+    try { saved = window.localStorage.getItem('acct_pay_' + S.companyId); } catch (e) { saved = null; }
+    var codes = pays.map(function (x) { return x.code; });
+    if (d && d.source === '財政部匯入' && codes.indexOf('2131') >= 0) return '2131';
+    if (saved && codes.indexOf(saved) >= 0) return saved;
+    return codes.indexOf('1111') >= 0 ? '1111' : codes[0] || '';
+  }
+  function rememberPay(code) { try { window.localStorage.setItem('acct_pay_' + S.companyId, code); } catch (e) { /* 忽略 */ } }
+
   RENDER.docs = function (el) {
     var status = S.docStatus || '待處理';
+    var picked = {};
+    var current = null;
     var html = '';
     if (can('uploadDoc')) {
       html += '<div class="card"><h3 style="margin-top:0">上傳發票、收據</h3>' +
-        '<p class="muted small" style="margin-top:0">可以一次選很多張。<b>一張照片只拍一張單據</b>，拍正、拍清楚、不要反光。支援照片與 PDF（每個檔案 10MB 以內）。系統會自動讀出日期、發票號碼、統編、金額，產生待確認的草稿。</p>' +
+        '<p class="muted small" style="margin-top:0">可以一次選很多張。<b>一張照片只拍一張單據</b>，拍正、拍清楚、不要反光。支援照片與 PDF（每個檔案 10MB 以內）。系統會讀出日期、發票號碼、統編、金額並檢查，結果要經過人工確認才會入帳。</p>' +
         '<div class="row"><label class="btn primary file-btn">選擇照片或 PDF<input type="file" id="docFiles" multiple accept="image/*,application/pdf" class="sr-only"></label>' +
         (can('importInvoices') ? '<label class="btn file-btn">匯入財政部進項發票檔<input type="file" id="invFile" accept=".csv,.txt,text/csv,text/plain" class="sr-only"></label>' : '') +
         '</div><div id="upProg" class="small" role="status" aria-live="polite"></div></div>';
     }
-    html += '<div class="toolbar"><div class="chips" id="docTabs">' + ['待處理', '已入帳', '略過', '全部'].map(function (t) {
+    html += '<div class="toolbar"><div class="chips" id="docTabs">' + ['待處理', '異常', '已入帳', '略過', '全部'].map(function (t) {
       return '<button type="button" class="chip' + (t === status ? ' on' : '') + '" data-st="' + t + '">' + t + '<span data-cnt="' + t + '"></span></button>';
-    }).join('') + '</div><label class="grow">搜尋（廠商、發票號碼、單據編號）<input id="docKw"></label><button class="btn" type="button" id="docGo">查詢</button></div><div id="docList"></div>';
+    }).join('') + '</div><label class="grow">搜尋（廠商、發票號碼、單據編號）<input id="docKw"></label><button class="btn" type="button" id="docGo">查詢</button></div>' +
+      '<div id="batchBar" class="batch-bar" hidden></div><div id="docList"></div>';
     el.innerHTML = html;
-    $all('#docTabs .chip').forEach(function (b) {
-      b.onclick = function () { status = S.docStatus = b.getAttribute('data-st'); $all('#docTabs .chip').forEach(function (x) { x.classList.toggle('on', x === b); }); load(); };
-    });
+    function setTab(t) {
+      status = S.docStatus = t;
+      $all('#docTabs .chip').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-st') === t); });
+    }
+    $all('#docTabs .chip').forEach(function (b) { b.onclick = function () { setTab(b.getAttribute('data-st')); load(); }; });
     $('#docGo').onclick = load;
     $('#docKw').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') load(); });
 
+    // ── 上傳與匯入 ──
     var files = $('#docFiles');
     if (files) files.onchange = function () {
       var list = Array.prototype.slice.call(files.files);
@@ -957,12 +1029,11 @@
       var step = function (i) {
         if (i >= list.length) {
           var dup = done.filter(function (d) { return d.status === '重複'; }).length;
-          var miss = done.filter(function (d) { return d.status !== '重複' && !d.total; }).length;
+          var bad = done.filter(function (d) { return d.level === '錯誤' || d.level === '警示'; }).length;
           prog.innerHTML = '<div class="notice ' + (failed.length ? 'warn' : 'good') + '" style="margin:10px 0 0">已上傳 ' + done.length + ' 張' +
-            (dup ? '，其中 ' + dup + ' 張和之前的發票號碼相同（標示「重複」）' : '') + (miss ? '，' + miss + ' 張沒有讀到金額，入帳時請自己填' : '') +
+            (dup ? '，' + dup + ' 張和之前的發票號碼相同（標示「重複」）' : '') + (bad ? '，' + bad + ' 張有缺漏或異常，請到「異常」分頁校正' : '') +
             (failed.length ? '<br>失敗 ' + failed.length + ' 張：' + failed.map(esc).join('；') : '') + '</div>';
-          status = S.docStatus = '待處理';
-          $all('#docTabs .chip').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-st') === status); });
+          setTab('待處理');
           load();
           return;
         }
@@ -982,100 +1053,210 @@
         $('#upProg').innerHTML = '<div class="notice good" style="margin:10px 0 0">匯入 ' + r.added + ' 張發票' +
           (r.duplicates.length ? '；' + r.duplicates.length + ' 張之前已經有了，沒有重複建立' : '') +
           (r.skipped.length ? '<br>略過 ' + r.skipped.length + ' 列：' + r.skipped.slice(0, 5).map(esc).join('；') + (r.skipped.length > 5 ? '…' : '') : '') + '</div>';
-        status = S.docStatus = '待處理';
-        $all('#docTabs .chip').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-st') === status); });
+        setTab('待處理');
         load();
       }).catch(function (e) { $('#upProg').innerHTML = '<div class="notice bad" style="margin:10px 0 0">' + esc(e.message) + '</div>'; });
     };
 
-    function payDefault(r, d) {
-      var saved = null;
-      try { saved = window.localStorage.getItem('acct_pay_' + S.companyId); } catch (e) { saved = null; }
-      var codes = r.payAccounts.map(function (x) { return x.code; });
-      if (d.source === '財政部匯入' && codes.indexOf('2131') >= 0) return '2131';
-      if (saved && codes.indexOf(saved) >= 0) return saved;
-      return codes.indexOf('1111') >= 0 ? '1111' : codes[0] || '';
-    }
+    // ── 清單 ──
+    function selectable(d) { return d.open && d.level !== '錯誤' && can('postDocs'); }
     function load() {
+      picked = {};
       return call('listDocs', { status: status, keyword: $('#docKw').value }).then(function (r) {
+        current = r;
         Object.keys(r.counts).forEach(function (k) { var c = $('[data-cnt="' + k + '"]'); if (c) c.textContent = r.counts[k] ? ' ' + r.counts[k] : ''; });
         var list = $('#docList');
+        renderBatch();
         if (!r.docs.length) {
-          list.innerHTML = '<div class="card muted">' + (status === '待處理' ? '沒有待處理的單據。' + (can('uploadDoc') ? '上傳發票或收據照片後會出現在這裡。' : '') : '沒有符合的單據。') + '</div>';
+          list.innerHTML = '<div class="card muted">' + (status === '待處理' ? '沒有待處理的單據。' + (can('uploadDoc') ? '上傳發票或收據照片後會出現在這裡。' : '') : status === '異常' ? '沒有異常的單據。' : '沒有符合的單據。') + '</div>';
           return;
         }
-        list.innerHTML = r.docs.map(function (d, i) {
-          var open = d.status === '待處理' || d.status === '重複';
-          return '<div class="voucher" data-i="' + i + '"><div class="voucher-head" role="button" tabindex="0" aria-expanded="false">' +
-            '<span class="no">' + esc(d.id) + '</span><span>' + esc(d.date || '日期未辨識') + '</span>' +
-            '<span class="memo">' + esc(d.sellerName || (d.source === '財政部匯入' ? d.sellerTaxId : '廠商未辨識')) + (d.invoiceNo ? ' <span class="muted small">' + esc(d.invoiceNo) + '</span>' : '') + '</span>' +
-            '<span class="num">' + (d.total ? fmt(d.total) : '<span class="muted">金額未辨識</span>') + '</span>' +
-            '<span class="badge ' + (DOC_BADGE[d.status] || 'lock') + '">' + esc(d.status) + '</span>' +
-            '<span class="muted small">' + esc(d.source === '財政部匯入' ? '財政部' : d.kind) + '</span></div>' +
-            '<div class="voucher-body" hidden><div class="table-wrap"><table><tbody>' +
-            '<tr><th>種類</th><td>' + esc(d.kind) + '（' + esc(d.source) + '）</td></tr>' +
-            '<tr><th>發票號碼</th><td>' + esc(d.invoiceNo || '—') + '</td></tr>' +
-            '<tr><th>賣方</th><td>' + esc(d.sellerName || '—') + (d.sellerTaxId ? '　統編 ' + esc(d.sellerTaxId) : '') + '</td></tr>' +
-            '<tr><th>金額</th><td>未稅 ' + fmt(d.net) + '　稅額 ' + fmt(d.tax) + '　總計 <b>' + fmt(d.total) + '</b>' + (d.tax && !d.deductible ? '　<span class="muted small">（沒有本公司統編，稅額不能扣抵）</span>' : '') + '</td></tr>' +
-            '<tr><th>建議科目</th><td>' + esc(d.suggest ? acctLabel(d.suggest) : '—') + '</td></tr>' +
-            '<tr><th>上傳</th><td>' + esc(d.uploadedBy) + '　' + esc(d.uploadedAt) + (d.fileName ? '　' + esc(d.fileName) : '') + '</td></tr>' +
-            (d.voucherNo ? '<tr><th>傳票</th><td>' + esc(d.voucherNo) + '　' + esc(d.doneBy) + ' ' + esc(d.doneAt) + '</td></tr>' : '') +
-            (d.note ? '<tr><th>備註</th><td>' + esc(d.note) + '</td></tr>' : '') +
-            '</tbody></table></div>' +
-            (d.text ? '<details class="ocr"><summary>辨識出的文字</summary><pre class="ocr-text">' + esc(d.text) + '</pre></details>' : '') +
-            '<div class="doc-view"></div><div class="voucher-actions">' +
-            (d.hasFile ? '<button class="btn small" type="button" data-act="file">查看原始單據</button>' : '') +
-            (open && can('saveVoucher') && r.payAccounts.length ? '<label class="pay-pick">付款方式<select data-pay>' + r.payAccounts.map(function (x) { return '<option value="' + esc(x.code) + '"' + (x.code === payDefault(r, d) ? ' selected' : '') + '>' + esc(x.label) + '</option>'; }).join('') + '</select></label>' +
-              '<button class="btn small primary" type="button" data-act="post">產生傳票</button>' : '') +
-            (open && can('skipDoc') ? '<button class="btn small" type="button" data-act="skip">略過</button>' : '') +
-            ((d.status === '略過' || d.status === '重複') && can('restoreDoc') ? '<button class="btn small" type="button" data-act="restore">改回待處理</button>' : '') +
-            '</div></div></div>';
-        }).join('');
-        $all('.voucher', list).forEach(function (card) {
-          var d = r.docs[+card.getAttribute('data-i')];
-          var head = $('.voucher-head', card), body = $('.voucher-body', card);
-          var toggle = function () { body.hidden = !body.hidden; head.setAttribute('aria-expanded', String(!body.hidden)); };
-          head.onclick = toggle;
-          head.onkeydown = function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); } };
-          $all('[data-act]', card).forEach(function (b) {
-            b.onclick = function () {
-              var act = b.getAttribute('data-act');
-              if (act === 'file') {
-                var box = $('.doc-view', card);
-                if (box.innerHTML) { box.innerHTML = ''; b.textContent = '查看原始單據'; } else { b.textContent = '收起原始單據'; loadDocInto(d.id, box); }
-              }
-              if (act === 'post') {
-                var pay = $('[data-pay]', card).value;
-                try { if (d.source !== '財政部匯入') window.localStorage.setItem('acct_pay_' + S.companyId, pay); } catch (e) { /* 忽略 */ }
-                var enabled = {};
-                S.boot.accounts.forEach(function (a) { if (a.enabled) enabled[a.code] = true; });
-                var lines = docLines(d, d.suggest, pay, enabled);
-                var memo = [d.sellerName || d.kind || '單據', d.invoiceNo].filter(Boolean).join(' ');
-                voucherEditor({ date: d.date || today(), type: pay === '2131' || pay === '2193' || pay === '1142' ? '轉帳' : '支出', memo: memo, lines: lines }, load, true, { doc: d });
-              }
-              if (act === 'skip') ask('略過單據 ' + d.id, '略過的單據不會入帳，之後可以在「略過」分頁改回待處理。', { input: '略過原因（例如：重複拍照、私人消費）', okText: '略過' }).then(function (reason) {
-                if (!reason) return;
-                call('skipDoc', { id: d.id, reason: reason }).then(function () { toast('已略過 ' + d.id); load(); }).catch(function (e) { toast(e.message, true); });
-              });
-              if (act === 'restore') call('restoreDoc', { id: d.id }).then(function () { toast(d.id + ' 已改回待處理'); load(); }).catch(function (e) { toast(e.message, true); });
-            };
-          });
-        });
+        var anySel = r.docs.some(selectable);
+        list.innerHTML = (anySel ? '<label class="check pick-all"><input type="checkbox" id="pickAll">全選可入帳的單據（有「錯誤」的不能勾）</label>' : '') +
+          r.docs.map(function (d, i) {
+            return '<div class="doc-row lvl-' + (LEVEL_BADGE[d.level] || 'lock') + '" data-i="' + i + '">' +
+              (anySel ? '<span class="doc-pick">' + (selectable(d) ? '<input type="checkbox" data-pick="' + esc(d.id) + '" aria-label="勾選 ' + esc(d.id) + '">' : '') + '</span>' : '') +
+              '<button type="button" class="doc-open" data-open="' + i + '">' +
+              '<span class="no">' + esc(d.id) + '</span><span>' + esc(d.date || '日期未辨識') + '</span>' +
+              '<span class="memo">' + esc(d.sellerName || d.sellerTaxId || '廠商未辨識') + (d.invoiceNo ? ' <span class="muted small">' + esc(d.invoiceNo) + '</span>' : '') + '</span>' +
+              '<span class="num">' + (d.total ? fmt(d.total) : '<span class="muted">金額未辨識</span>') + '</span>' +
+              '<span class="badge ' + (DOC_BADGE[d.status] || 'lock') + '">' + esc(d.status) + '</span>' +
+              (d.open ? '<span class="badge ' + LEVEL_BADGE[d.level] + '">' + esc(d.level) + (d.issues.length ? ' ' + d.issues.length : '') + '</span>' : '') +
+              '<span class="muted small">' + esc(d.source === '財政部匯入' ? '財政部' : d.kind) + (d.open ? '・扣抵' + esc(d.deductible) : d.voucherNo ? '・' + esc(d.voucherNo) : '') + '</span>' +
+              '</button></div>';
+          }).join('');
+        $all('[data-open]', list).forEach(function (b) { b.onclick = function () { openReview(r.docs[+b.getAttribute('data-open')].id); }; });
+        $all('[data-pick]', list).forEach(function (c) { c.onchange = function () { if (c.checked) picked[c.getAttribute('data-pick')] = true; else delete picked[c.getAttribute('data-pick')]; renderBatch(); }; });
+        var all = $('#pickAll');
+        if (all) all.onchange = function () { $all('[data-pick]', list).forEach(function (c) { c.checked = all.checked; c.onchange(); }); };
       }).catch(function (e) { $('#docList').innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    }
+
+    // ── 批次確認 ──
+    function renderBatch() {
+      var bar = $('#batchBar');
+      var ids = Object.keys(picked);
+      if (!ids.length || !current) { bar.hidden = true; bar.innerHTML = ''; return; }
+      var docs = current.docs.filter(function (d) { return picked[d.id]; });
+      var warn = docs.filter(function (d) { return d.level === '警示'; }).length;
+      var undecided = docs.filter(function (d) { return d.deductible === '未判定'; }).length;
+      bar.hidden = false;
+      bar.innerHTML = '<b>已選 ' + ids.length + ' 張</b>' +
+        '<label>付款方式<select id="bPay">' + current.payAccounts.map(function (x) { return '<option value="' + esc(x.code) + '"' + (x.code === payDefault(current.payAccounts) ? ' selected' : '') + '>' + esc(x.label) + '</option>'; }).join('') + '</select></label>' +
+        '<label>進項稅額扣抵<select id="bDed"><option value="own">依各單據已判定' + (undecided ? '（' + undecided + ' 張未判定會失敗）' : '') + '</option><option value="hint">採用系統建議（我已逐張核對）</option><option value="none">全部不可扣抵</option></select></label>' +
+        (warn ? '<label class="check"><input type="checkbox" id="bAck">所選單據的 ' + warn + ' 張警示我已核對</label>' : '') +
+        '<button class="btn primary" type="button" id="bGo">批次確認入帳</button><span id="bMsg" class="small"></span>';
+      $('#bGo').onclick = function () {
+        var pay = $('#bPay').value, mode = $('#bDed').value;
+        if (warn && !$('#bAck').checked) { $('#bMsg').textContent = '請先核對警示並勾選'; return; }
+        rememberPay(pay);
+        var items = docs.map(function (d) {
+          return { id: d.id, expense: d.suggest, pay: pay, ackWarnings: !!warn, deductible: mode === 'hint' ? d.hintSuggest : mode === 'none' ? '不可扣抵' : d.deductible };
+        });
+        var size = current.batchMax || 20, chunks = [];
+        for (var i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+        var results = [];
+        var next = function (k) {
+          if (k >= chunks.length) {
+            var ok = results.filter(function (x) { return x.ok; }), bad = results.filter(function (x) { return !x.ok; });
+            $('#upProg') && ($('#upProg').innerHTML = '');
+            var box = document.createElement('div');
+            box.className = 'notice ' + (bad.length ? 'warn' : 'good');
+            box.innerHTML = '入帳 ' + ok.length + ' 張' + (ok.length ? '（傳票 ' + ok.map(function (x) { return esc(x.no); }).join('、') + '）' : '') +
+              (bad.length ? '<br>失敗 ' + bad.length + ' 張：<br>' + bad.map(function (x) { return esc(x.id) + '：' + esc(x.error); }).join('<br>') : '');
+            load().then(function () { $('#docList').insertBefore(box, $('#docList').firstChild); });
+            return;
+          }
+          call('postDocs', { items: chunks[k] }).then(function (r) { results = results.concat(r.results); next(k + 1); })
+            .catch(function (e) { $('#bMsg').textContent = e.message; });
+        };
+        next(0);
+      };
+    }
+
+    // ── 校正畫面：左原始單據、右辨識欄位 ──
+    function openReview(id) {
+      return call('getDoc', { id: id }).then(function (d) { showReview(d); }).catch(function (e) { toast(e.message, true); });
+    }
+    function showReview(d) {
+      var editable = d.open && can('updateDoc');
+      var canPost = d.open && can('postDocs');
+      var dis = editable ? '' : ' disabled';
+      var body = openModal('校正單據 ' + d.id + '｜' + coName(),
+        '<datalist id="acctList">' + acctOptions() + '</datalist>' +
+        '<div class="review">' +
+        '<div class="review-src"><div id="rvFile">' + (d.hasFile ? '' : '<div class="notice info">財政部匯入的電子發票，沒有原始圖檔。欄位來自財政部資料。</div>') + '</div>' +
+        (d.text ? '<details class="ocr"><summary>OCR 原始文字</summary><pre class="ocr-text">' + esc(d.text) + '</pre></details>' : '') + '</div>' +
+        '<div class="review-form">' +
+        '<div class="rv-head"><span class="badge ' + (DOC_BADGE[d.status] || 'lock') + '">' + esc(d.status) + '</span><span class="badge ' + LEVEL_BADGE[d.level] + '">' + esc(d.level) + '</span>' +
+        '<span class="muted small">' + esc(d.source) + '・' + esc(d.uploadedBy) + ' ' + esc(d.uploadedAt) + (d.confirmedBy ? '・確認 ' + esc(d.confirmedBy) : '') + (d.voucherNo ? '・傳票 ' + esc(d.voucherNo) : '') + '</span></div>' +
+        issueList(d.issues) +
+        '<div class="rv-grid">' +
+        '<label class="fld">種類<select data-f="kind"' + dis + '>' + d.kinds.map(function (k) { return '<option' + (k === d.kind ? ' selected' : '') + '>' + esc(k) + '</option>'; }).join('') + '</select></label>' +
+        DOC_FIELDS_UI.map(function (f) {
+          var v = d[f[0]];
+          var bad = d.issues.some(function (i) { return i.field === f[0] && (i.level === '錯誤' || i.level === '警示'); });
+          return '<label class="fld' + (bad ? ' bad' : '') + '"><span>' + f[1] + ' ' + srcBadge(d.src[f[0]]) + '</span>' +
+            '<input data-f="' + f[0] + '"' + (f[2] === 'date' ? ' type="date"' : '') + (f[2] === 'num' ? ' class="num" inputmode="numeric"' : '') +
+            ' value="' + esc(f[2] === 'num' ? (v || '') : v) + '"' + dis + '></label>';
+        }).join('') + '</div>' +
+        '<p class="small" id="rvSum"></p>' +
+        '<fieldset class="ded"><legend>進項稅額扣抵 ' + (d.src.deductible ? srcBadge(d.src.deductible) : '') + '</legend>' +
+        ['未判定', '可扣抵', '不可扣抵'].map(function (k) { return '<label class="check"><input type="radio" name="rvDed" value="' + k + '"' + (k === d.deductible ? ' checked' : '') + dis + '>' + k + '</label>'; }).join('') +
+        '<p class="small muted" style="margin:4px 0 0">系統建議：<b>' + esc(d.hintSuggest) + '</b>（' + esc(d.hintReason) + '）。建議只供參考，請依實際用途判定。</p></fieldset>' +
+        (canPost ? '<div class="rv-grid"><label class="fld">費用科目<input list="acctList" id="rvExp" value="' + esc(d.suggest ? acctLabel(d.suggest) : '') + '"></label>' +
+          '<label class="fld">付款方式<select id="rvPay">' + d.payAccounts.map(function (x) { return '<option value="' + esc(x.code) + '"' + (x.code === payDefault(d.payAccounts, d) ? ' selected' : '') + '>' + esc(x.label) + '</option>'; }).join('') + '</select></label></div>' +
+          (d.issues.some(function (i) { return i.level === '警示'; }) ? '<label class="check"><input type="checkbox" id="rvAck">我已對照原始單據核對上面的警示</label>' : '') : '') +
+        '<p class="error-text" id="rvErr" role="alert"></p>' +
+        '<div class="modal-foot">' +
+        '<button class="btn" type="button" id="rvClose">關閉</button>' +
+        (d.open && can('skipDoc') ? '<button class="btn" type="button" id="rvSkip">略過</button>' : '') +
+        ((d.status === '略過' || d.status === '重複') && can('restoreDoc') ? '<button class="btn" type="button" id="rvRestore">改回待處理</button>' : '') +
+        (editable && d.source === '拍照上傳' && can('reparseDoc') ? '<button class="btn" type="button" id="rvReparse">重新解析</button>' : '') +
+        (editable ? '<button class="btn" type="button" id="rvSave">儲存修改</button>' : '') +
+        (canPost ? '<button class="btn" type="button" id="rvEditor">用傳票編輯器</button><button class="btn primary" type="button" id="rvPost">確認入帳</button>' : '') +
+        '</div></div></div>', { wide: true });
+      if (d.hasFile) loadDocInto(d.id, $('#rvFile', body));
+      var err = $('#rvErr', body);
+      var val = function (f) { var x = $('[data-f="' + f + '"]', body); return x ? x.value.trim() : ''; };
+      var ded = function () { var r = $('input[name="rvDed"]:checked', body); return r ? r.value : d.deductible; };
+      function sumLine() {
+        var n = amt(val('net')) || 0, t = amt(val('tax')) || 0, tot = amt(val('total')) || 0;
+        var diff = n + t - tot;
+        $('#rvSum', body).innerHTML = '未稅 ' + fmt(n) + ' ＋ 稅額 ' + fmt(t) + ' ＝ ' + fmt(n + t) + (tot ? (Math.abs(diff) > 1 ? '　<span class="diff-bad">與總額相差 ' + fmt(diff) + '</span>' : '　<span class="diff-ok">與總額相符</span>') : '');
+      }
+      body.addEventListener('input', function () { err.textContent = ''; sumLine(); });
+      sumLine();
+      function changes() {
+        var f = {};
+        ['kind'].concat(DOC_FIELDS_UI.map(function (x) { return x[0]; })).forEach(function (k) {
+          var v = val(k), old = d[k];
+          if (k === 'net' || k === 'tax' || k === 'total') { if ((amt(v) || 0) !== (Number(old) || 0)) f[k] = v === '' ? 0 : v; }
+          else if (v !== String(old || '')) f[k] = v;
+        });
+        if (ded() !== d.deductible) f.deductible = ded();
+        var exp = $('#rvExp', body);
+        if (exp) { var c = parseAcct(exp.value); if (c && c !== d.suggest) f.suggest = c; }
+        return f;
+      }
+      function save(confirm) {
+        var f = changes();
+        if (!Object.keys(f).length && !confirm) return Promise.resolve(d);
+        return call('updateDoc', { id: d.id, rev: d.rev, fields: f, confirm: !!confirm }).then(function (nd) { nd.text = d.text; nd.payAccounts = d.payAccounts; nd.kinds = d.kinds; d = nd; return nd; });
+      }
+      $('#rvClose', body).onclick = function () { closeModal(); load(); };
+      if ($('#rvSave', body)) $('#rvSave', body).onclick = function () {
+        save(true).then(function (nd) { toast('已儲存 ' + nd.id); showReview(nd); }).catch(function (e) { err.textContent = e.message; });
+      };
+      if ($('#rvReparse', body)) $('#rvReparse', body).onclick = function () {
+        call('reparseDoc', { id: d.id }).then(function (nd) { nd.text = d.text; nd.payAccounts = d.payAccounts; nd.kinds = d.kinds; toast('已重新解析（人工改過的欄位不變）'); showReview(nd); }).catch(function (e) { err.textContent = e.message; });
+      };
+      if ($('#rvSkip', body)) $('#rvSkip', body).onclick = function () {
+        ask('略過單據 ' + d.id, '略過的單據不會入帳，之後可以在「略過」分頁改回待處理。', { input: '略過原因（例如：重複拍照、私人消費）', okText: '略過' }).then(function (reason) {
+          if (!reason) return showReview(d);
+          call('skipDoc', { id: d.id, reason: reason }).then(function () { toast('已略過 ' + d.id); load(); }).catch(function (e) { toast(e.message, true); });
+        });
+      };
+      if ($('#rvRestore', body)) $('#rvRestore', body).onclick = function () {
+        ask('改回待處理 ' + d.id, d.status === '重複' ? '同一個發票號碼已經有其他單據；若其中一張已入帳，這張仍然不能入帳。' : '改回後可以重新校正、入帳。', { input: '原因', okText: '改回待處理' }).then(function (reason) {
+          if (!reason) return showReview(d);
+          call('restoreDoc', { id: d.id, reason: reason }).then(function () { toast(d.id + ' 已改回待處理'); load(); }).catch(function (e) { toast(e.message, true); });
+        });
+      };
+      function readyToPost() {
+        var c = ded();
+        if (c === '未判定') { err.textContent = '請先判定進項稅額是否可扣抵'; return null; }
+        var exp = parseAcct($('#rvExp', body).value);
+        if (!S.acctMap[exp]) { err.textContent = '請選擇費用科目'; return null; }
+        var ack = $('#rvAck', body);
+        if (ack && !ack.checked) { err.textContent = '請先對照原始單據核對警示，並勾選「我已核對」'; return null; }
+        return { deductible: c, expense: exp, pay: $('#rvPay', body).value, ackWarnings: !!ack };
+      }
+      if ($('#rvPost', body)) $('#rvPost', body).onclick = function () {
+        var p = readyToPost();
+        if (!p) return;
+        rememberPay(p.pay);
+        save(false).then(function () {
+          return call('postDocs', { items: [{ id: d.id, expense: p.expense, pay: p.pay, deductible: p.deductible, ackWarnings: p.ackWarnings }] });
+        }).then(function (r) {
+          var x = r.results[0];
+          if (!x.ok) { err.textContent = x.error; return; }
+          closeModal(); toast(d.id + ' 已入帳，傳票 ' + x.no); load();
+        }).catch(function (e) { err.textContent = e.message; });
+      };
+      if ($('#rvEditor', body)) $('#rvEditor', body).onclick = function () {
+        var p = readyToPost();
+        if (!p) return;
+        save(false).then(function () {
+          return call('getDoc', { id: d.id, expense: p.expense, pay: p.pay, deductible: p.deductible });
+        }).then(function (g) {
+          g.deductible = p.deductible; g.ackWarnings = p.ackWarnings;
+          voucherEditor({ date: g.date || today(), type: g.voucherType, memo: g.memo, lines: g.lines }, load, true, { doc: g });
+        }).catch(function (e) { err.textContent = e.message; });
+      };
     }
     return load();
   };
-  /** 與後端 docToLines_ 相同規則：可扣抵時拆出進項稅額 */
-  function docLines(d, expense, pay, enabled) {
-    var total = Number(d.total) || 0, tax = Number(d.tax) || 0, party = d.sellerName || '';
-    var lines = [];
-    if (tax > 0 && tax < total && d.deductible && enabled['1191']) {
-      lines.push({ code: expense, debit: total - tax, party: party });
-      lines.push({ code: '1191', debit: tax, party: party });
-    } else lines.push({ code: expense, debit: total, party: party });
-    lines.push({ code: pay, credit: total, party: party });
-    return lines;
-  }
 
   // ── 月底盤點 ──
   RENDER.stocktake = function (el) {
@@ -1725,7 +1906,7 @@
     var role = S.boot.user.role;
     var h = '<div class="card help">';
     if (role === '助理') {
-      h += '<h3 style="margin-top:0">您可以做的事</h3><ul><li>「傳票」：選月份查看傳票，點一張傳票展開分錄。</li><li>「日記簿」：依日期區間查看所有分錄。</li><li>「變更密碼」：第一次登入請先改成自己的密碼。</li></ul><p>「單據匣」：上傳發票、收據照片（可一次選多張），系統自動讀出內容，交給會計確認入帳。</p>';
+      h += '<h3 style="margin-top:0">您可以做的事</h3><ul><li>「傳票」：選月份查看傳票，點一張傳票展開分錄。</li><li>「日記簿」：依日期區間查看所有分錄。</li><li>「變更密碼」：第一次登入請先改成自己的密碼。</li></ul><p>「單據匣」：上傳發票、收據照片（可一次選多張），系統自動讀出內容並檢查，交給會計校正與確認入帳。</p>';
     } else {
       h += '<h3 style="margin-top:0">每天／每週：記傳票</h3><ol>' +
         '<li>先看右上角是不是要記帳的那家公司（多家公司時可在右上角切換，頂端色條顏色代表公司）。</li>' +
@@ -1734,9 +1915,11 @@
         '<li>借方合計等於貸方合計才能儲存。</li></ol>' +
         '<p class="muted small">常見分錄：營收入帳＝借 銀行存款／貸 餐飲收入、貸 銷項稅額；食材進貨＝借 食材及飲料進貨、借 進項稅額／貸 銀行存款或應付帳款；店租＝借 租金支出／貸 銀行存款。</p>' +
         '<h3>發票、收據：單據匣</h3><ol>' +
-        '<li>「單據匣」按「選擇照片或 PDF」，可一次選多張；一張照片只拍一張單據。系統自動讀出日期、發票號碼、統編、金額。</li>' +
-        '<li>電子發票不用拍照：到財政部「電子發票整合服務平台」下載進項發票 CSV，按「匯入財政部進項發票檔」。同一張發票不會重複建立。</li>' +
-        '<li>每張單據選「付款方式」後按「產生傳票」，對照原始單據確認日期、金額、科目再儲存。手寫字容易認錯，一定要看過。</li>' +
+        '<li>「單據匣」按「選擇照片或 PDF」，可一次選多張；一張照片只拍一張單據。電子發票到財政部「電子發票整合服務平台」下載進項發票 CSV，按「匯入財政部進項發票檔」。</li>' +
+        '<li>點一張單據打開校正畫面：左邊是原始單據，右邊是辨識欄位。每個欄位旁標示來源——原文（照片上讀到）、推算（系統算出）、匯入（財政部資料）、人工（有人改過）。</li>' +
+        '<li>紅色「錯誤」（例如金額對不上、日期缺漏、同一張發票已入帳、月份已鎖帳）要先改好才能入帳；黃色「警示」要對照原始單據後勾選「我已核對」。</li>' +
+        '<li><b>進項稅額扣抵要自己判定</b>：系統只給建議（買方是不是本公司、是不是統一發票、科目是不是交際費等），未判定不能入帳。</li>' +
+        '<li>選費用科目與付款方式，按「確認入帳」；或在清單勾選多張「批次確認入帳」。每張都會經過和手動傳票相同的檢查，同一張發票只能入帳一次。</li>' +
         '<li>傳票作廢後，單據會回到「待處理」，可以重新入帳。</li></ol>' +
         '<h3>每月底：盤點、鎖帳、看報表</h3><ol>' +
         '<li>「月底盤點」：輸入各存貨科目的盤點金額，系統自動產生調整傳票，算出本月真正的成本。</li>' +

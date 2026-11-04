@@ -4,7 +4,7 @@
  */
 var APP = {
   name: '公版會計系統',
-  version: '0.3.0'
+  version: '0.4.0'
 };
 
 var SHEETS = {
@@ -16,6 +16,7 @@ var SHEETS = {
   PERIODS: '期間',
   STOCKTAKE: '月底盤點',
   DOCS: '單據',
+  DOC_TEXT: '單據原文',
   RPT_TB: '報表_試算表',
   RPT_IS: '報表_損益表',
   RPT_BS: '報表_資產負債表',
@@ -28,7 +29,7 @@ var SHEETS = {
 /** 集團主檔上的工作表（帳號、公司清單、權限、操作紀錄）；其餘工作表在各公司自己的試算表 */
 var HUB_SHEETS = [SHEETS.COMPANIES, SHEETS.USERS, SHEETS.ACCESS, SHEETS.LOG];
 /** 每家公司試算表上的工作表 */
-var COMPANY_SHEETS = [SHEETS.SETTINGS, SHEETS.ACCOUNTS, SHEETS.OPENING, SHEETS.VOUCHERS, SHEETS.PERIODS, SHEETS.STOCKTAKE, SHEETS.DOCS, SHEETS.REF];
+var COMPANY_SHEETS = [SHEETS.SETTINGS, SHEETS.ACCOUNTS, SHEETS.OPENING, SHEETS.VOUCHERS, SHEETS.PERIODS, SHEETS.STOCKTAKE, SHEETS.DOCS, SHEETS.DOC_TEXT, SHEETS.REF];
 
 var HEADERS = {};
 HEADERS[SHEETS.SETTINGS] = ['項目', '值', '說明'];
@@ -38,7 +39,9 @@ HEADERS[SHEETS.OPENING] = ['科目代碼', '科目名稱', '借方', '貸方'];
 HEADERS[SHEETS.VOUCHERS] = ['傳票號碼', '日期', '類型', '行號', '科目代碼', '科目名稱', '借方', '貸方', '摘要', '往來對象', '來源', '狀態', '建立者', '建立時間', '修改者', '修改時間'];
 HEADERS[SHEETS.PERIODS] = ['期間', '狀態', '鎖定人', '鎖定時間'];
 HEADERS[SHEETS.STOCKTAKE] = ['期間', '存貨科目', '存貨名稱', '帳上金額', '盤點金額', '差額', '對應成本科目', '傳票號碼', '建立者', '建立時間'];
-HEADERS[SHEETS.DOCS] = ['單據編號', '來源', '種類', '狀態', '日期', '發票號碼', '賣方名稱', '賣方統編', '買方統編', '未稅金額', '稅額', '總金額', '可扣抵', '建議科目', '檔名', '檔案ID', '辨識文字', '傳票號碼', '備註', '上傳者', '上傳時間', '處理者', '處理時間'];
+HEADERS[SHEETS.DOCS] = ['單據編號', '來源', '種類', '狀態', '日期', '發票號碼', '賣方名稱', '賣方統編', '買方統編', '未稅金額', '稅額', '總金額', '欄位來源', '驗證等級', '驗證結果', '扣抵判定', '扣抵建議', '建議科目', '檔名', '檔案ID', '傳票號碼', '備註', '上傳者', '上傳時間', '確認者', '確認時間', '處理者', '處理時間', '版本', '解析版本'];
+/** OCR 原始文字另存（與解析結果分開）；一段最多 40,000 字，太長分多列 */
+HEADERS[SHEETS.DOC_TEXT] = ['單據編號', '引擎', '段落', '原始文字', '擷取時間'];
 HEADERS[SHEETS.USERS] = ['帳號', '姓名', '角色', '鹽', '密碼雜湊', '啟用', '建立時間', '最後登入'];
 HEADERS[SHEETS.LOG] = ['時間', '帳號', '動作', '內容', '公司'];
 HEADERS[SHEETS.COMPANIES] = ['公司代碼', '公司名稱', '試算表ID', '啟用', '建立時間'];
@@ -52,7 +55,8 @@ TEXT_COLUMNS[SHEETS.OPENING] = ['科目代碼'];
 TEXT_COLUMNS[SHEETS.VOUCHERS] = ['傳票號碼', '日期', '科目代碼', '建立時間', '修改時間'];
 TEXT_COLUMNS[SHEETS.PERIODS] = ['期間', '鎖定時間'];
 TEXT_COLUMNS[SHEETS.STOCKTAKE] = ['期間', '存貨科目', '對應成本科目', '傳票號碼', '建立時間'];
-TEXT_COLUMNS[SHEETS.DOCS] = ['單據編號', '日期', '發票號碼', '賣方統編', '買方統編', '建議科目', '檔案ID', '傳票號碼', '上傳時間', '處理時間'];
+TEXT_COLUMNS[SHEETS.DOCS] = ['單據編號', '日期', '發票號碼', '賣方統編', '買方統編', '建議科目', '檔案ID', '傳票號碼', '上傳時間', '確認時間', '處理時間'];
+TEXT_COLUMNS[SHEETS.DOC_TEXT] = ['單據編號', '擷取時間'];
 TEXT_COLUMNS[SHEETS.USERS] = ['帳號', '建立時間', '最後登入'];
 TEXT_COLUMNS[SHEETS.LOG] = ['時間'];
 TEXT_COLUMNS[SHEETS.COMPANIES] = ['公司代碼', '試算表ID', '建立時間'];
@@ -134,6 +138,10 @@ var PERMISSIONS = {
   listDocs:         ['管理者', '會計', '助理'],
   uploadDoc:        ['管理者', '會計', '助理'],
   docFile:          ['管理者', '會計', '助理'],
+  getDoc:           ['管理者', '會計', '助理'],
+  updateDoc:        ['管理者', '會計'],
+  reparseDoc:       ['管理者', '會計'],
+  postDocs:         ['管理者', '會計'],
   importInvoices:   ['管理者', '會計'],
   skipDoc:          ['管理者', '會計'],
   restoreDoc:       ['管理者', '會計']
