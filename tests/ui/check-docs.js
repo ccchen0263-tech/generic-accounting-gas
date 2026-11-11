@@ -85,6 +85,8 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     const srcs = await page.$$eval('.review-form .src', (x) => x.map((e) => e.textContent));
     if (!srcs.includes('原文')) fail('欄位沒有標示來源：' + srcs.join(','));
     if (await page.inputValue('[data-f="total"]') !== '10500') fail('總金額沒有帶入');
+    const memo = await page.inputValue('#rvMemo');
+    if (!memo || /undefined/.test(memo)) fail('傳票摘要沒有預設值：' + memo);
     if (!/與總額相符/.test(await page.textContent('#rvSum'))) fail('金額核對沒有顯示相符');
     const layout = await page.evaluate(() => { const a = document.querySelector('.review-src').getBoundingClientRect(), b = document.querySelector('.review-form').getBoundingClientRect(); return { side: b.left > a.right - 1, stacked: b.top >= a.bottom - 1 }; });
     if (size.width >= 900 && !layout.side) fail('桌機應左右並排');

@@ -172,6 +172,7 @@ function parseReceiptText_(text, own) {
 
 /** 依關鍵字建議費用科目；食材依產業區分 */
 var EXPENSE_RULES = [
+  [/手續費|金流|LINE\s*Pay|街口支付|綠界|藍新|刷卡服務/i, '6331'],
   [/中華電信|台灣大哥大|遠傳|亞太電信|電信|寬頻|網路費|電話費/, '6161'],
   [/台灣電力|台電|電費|自來水|水費|瓦斯|天然氣|欣[^\s]{0,2}瓦斯/, '6191'],
   [/加油站|中油|台塑石化|全國加油|停車|計程車|高鐵|臺鐵|台鐵|客運|ETC|遠通/, '6142'],
@@ -235,12 +236,47 @@ function docToLines_(doc, expenseCode, payCode, enabledCodes) {
 }
 
 /** 單據摘要：賣方＋發票號碼 */
-function docMemo_(doc) {
-  return [str_(doc.sellerName) || str_(doc.kind) || '單據', str_(doc.invoiceNo)].filter(String).join(' ');
+/**
+ * 傳票摘要：寫「買了什麼」（品名）＋發票號碼；讀不到品名才用賣方名稱。
+ * 科目已經表達分類、往來對象已經有廠商，摘要不再重複。
+ */
+function docMemo_(doc, item) {
+  return [str_(item) || str_(doc.sellerName) || str_(doc.kind) || '單據', str_(doc.invoiceNo)].filter(String).join(' ');
+}
+
+/**
+ * 從 OCR 原文找品名：
+ *   1. 「品名：XXX」
+ *   2. 表頭「品名 數量 單價 金額 (備註)」後面，每列取第一個數字之前的文字，到銷售額／合計等結尾為止
+ * 最多列 3 項，更多的加「等」。讀不到回傳空字串。
+ */
+function itemNameOf_(text) {
+  var lines = String(text || '').split(/\r?\n/).map(function (l) { return l.replace(/　/g, ' ').replace(/\s+/g, ' ').trim(); }).filter(String);
+  var END = /^(銷售額|未稅|小計|合計|總計|營業稅|稅額|應稅|TOTAL|Total)/;
+  var HEAD = /品\s*名(\s*\/?\s*(規格|摘要))?\s+(數\s*量|單\s*價|金\s*額)(\s+(數\s*量|單\s*價|金\s*額|小\s*計|備\s*註|單\s*位))*/;
+  var clean = function (t) {
+    t = String(t || '').split(/\s(?=[\d,]+(\.\d+)?(\s|$))/)[0]; // 第一個獨立數字（數量、單價）之前
+    t = t.replace(/[\s*＊x×]+$/i, '').trim();
+    return /[\u4e00-\u9fffA-Za-z]{2,}/.test(t) && !/^(品名|數量|單價|金額|備註|發票|統一編號|買方|賣方)/.test(t) ? t.slice(0, 30) : '';
+  };
+  var items = [];
+  for (var i = 0; i < lines.length; i++) {
+    var lab = /品\s*名\s*[:：]\s*(.+)$/.exec(lines[i]);
+    if (lab) { var one = clean(lab[1]); if (one) items.push(one); continue; }
+    var h = HEAD.exec(lines[i]);
+    if (!h) continue;
+    var first = clean(lines[i].slice(h.index + h[0].length));
+    if (first) items.push(first);
+    for (var j = i + 1; j < lines.length && !END.test(lines[j]); j++) { var it = clean(lines[j]); if (it) items.push(it); }
+    break;
+  }
+  items = items.filter(function (x, k) { return items.indexOf(x) === k; });
+  if (!items.length) return '';
+  return items.slice(0, 3).join('、') + (items.length > 3 ? '等' : '');
 }
 
 /** 解析規則版本：規則改了就加 1，舊單據可用「重新解析」套用新規則 */
-var PARSER_VERSION = 2;
+var PARSER_VERSION = 3;
 
 // ───────────── 單據驗證 ─────────────
 

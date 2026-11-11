@@ -159,6 +159,20 @@ test('電子發票證明聯（A4 版面，雲端硬碟 OCR 實際輸出，名稱
   }
 });
 
+test('傳票摘要：寫品名＋發票號碼，讀不到品名才用賣方', () => {
+  const app = loadApp();
+  const einv = '發票號碼：HH40907524 格 式：25\n品名 數量 單價 金額 備註 線上金流服務費 1 2,049 2,049 1BFS_X.EC \n銷售額合計 2,049';
+  assert.equal(app.itemNameOf_(einv), '線上金流服務費');
+  const table = ['品名 數量 單價 金額', '影印紙 A4 2 150 300', '原子筆 10 15 150', '資料夾 5 20 100', '膠帶 3 30 90', '合計 640'].join('\n');
+  assert.equal(app.itemNameOf_(table), '影印紙 A4、原子筆、資料夾等');
+  assert.equal(app.itemNameOf_('收據\n品名：冷氣清洗\n合計 3,200'), '冷氣清洗');
+  assert.equal(app.itemNameOf_(HANDWRITTEN), '', '沒有品名表頭就不亂猜');
+  assert.equal(app.docMemo_({ sellerName: '範例網路股份有限公司', invoiceNo: 'HH40907524' }, '線上金流服務費'), '線上金流服務費 HH40907524');
+  assert.equal(app.docMemo_({ sellerName: '範例網路股份有限公司', invoiceNo: 'HH40907524' }, ''), '範例網路股份有限公司 HH40907524');
+  const on = { 6331: true, 6399: true };
+  assert.equal(app.suggestExpense_('範例網路股份有限公司\nLINE Pay 服務費', ['餐飲'], on), '6331');
+});
+
 test('金額與賣方的邊界情況（Codex 審查）', () => {
   const app = loadApp();
   assert.equal(plain(app.parseReceiptText_('合計 新臺幣 3,200 元', {})).total, 3200);
@@ -232,6 +246,7 @@ test('上傳 → 原文另存 → 未判定不能入帳 → 人工校正 → 入
   assert.equal(ok.ok, 1, JSON.stringify(ok.results));
   const v = call('getVoucher', { no: ok.results[0].no });
   assert.equal(v.source, '單據');
+  assert.equal(v.memo, '大成生鮮食品公司 AB12345678', '讀不到品名時摘要用賣方名稱');
   assert.equal(v.type, '轉帳');
   assert.deepEqual(v.lines.map((l) => [l.code, l.debit, l.credit]), [['5171', 10000, 0], ['1191', 500, 0], ['2131', 0, 10500]]);
   assert.equal(call('listVouchers', { period: '2026-10' }).vouchers[0].docs[0].id, up.id);
@@ -243,6 +258,24 @@ test('上傳 → 原文另存 → 未判定不能入帳 → 人工校正 → 入
   assert.equal(back.status, '待處理');
   assert.equal(back.voucherNo, '');
   assert.match(back.note, /已作廢/);
+});
+
+test('電子發票證明聯上傳：建議手續費科目、摘要帶品名；畫面改過的摘要照用', () => {
+  const { call, upload } = books();
+  const einv = (no) => '電子發票證明聯\n2026-10-04\n發票號碼：' + no + ' 格 式：25 買 方：測試買方股份有限公司\n統一編號：' + OWN +
+    '\n品名 數量 單價 金額 備註 LINE Pay 服務費 1 2,049 2,049 X.EC\n銷售額合計 2,049 營業人蓋統一發票專用章\n營業稅 應稅 √ 零稅率 免稅 102 賣 方：範例網路股份有限公司\n總計 2,151 統一編號：' + SELLER;
+  const a = upload(einv('HH40907524'), 'a.pdf');
+  const d = call('getDoc', { id: a.id });
+  assert.equal(d.suggest, '6331');
+  assert.equal(d.item, 'LINE Pay 服務費');
+  const r = call('postDocs', { items: [itemOf(call, a.id, { pay: '1111', deductible: '可扣抵' })] });
+  assert.equal(r.ok, 1, JSON.stringify(r.results));
+  const v = call('getVoucher', { no: r.results[0].no });
+  assert.equal(v.memo, 'LINE Pay 服務費 HH40907524');
+  assert.deepEqual(v.lines.map((l) => [l.code, l.debit, l.credit]), [['6331', 2049, 0], ['1191', 102, 0], ['1111', 0, 2151]]);
+  const b = upload(einv('HH40907525'), 'b.pdf');
+  const r2 = call('postDocs', { items: [itemOf(call, b.id, { pay: '1111', deductible: '可扣抵', memo: '十月 LINE Pay 金流服務費' })] });
+  assert.equal(call('getVoucher', { no: r2.results[0].no }).memo, '十月 LINE Pay 金流服務費');
 });
 
 test('防重複入帳：同號發票只能入帳一次；改回待處理也擋得住；作廢後才能改入另一張', () => {

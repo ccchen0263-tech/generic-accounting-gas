@@ -244,13 +244,14 @@ HANDLERS.getDoc = function (p) {
   checkDoc_(d, ctx);
   var v = docView_(d, ctx, enabled);
   v.text = loadDocText_(d.id);
+  v.item = d.source === '拍照上傳' ? itemNameOf_(v.text) : '';
   v.payAccounts = payAccounts_(enabled);
   v.kinds = DOC_KINDS;
   if (p.expense && p.pay) {
     var deductible = DEDUCT_STATES.indexOf(str_(p.deductible)) >= 0 ? str_(p.deductible) : d.deductible;
     v.lines = docToLines_({ total: d.total, tax: d.tax, sellerName: d.sellerName, deductible: deductible }, str_(p.expense), str_(p.pay), enabled);
     v.voucherType = TRANSFER_PAY_CODES.indexOf(str_(p.pay)) >= 0 ? '轉帳' : '支出';
-    v.memo = docMemo_(d);
+    v.memo = docMemo_(d, v.item);
   }
   return v;
 };
@@ -433,6 +434,11 @@ HANDLERS.reparseDoc = function (p, s) {
       if (parsed.src[k]) d.src[k] = parsed.src[k]; else delete d.src[k];
     });
     d.parserVersion = PARSER_VERSION;
+    // 原本只是「雜費／消耗品」這種找不到規則的預設科目時，依新規則重新建議
+    if (!d.suggest || d.suggest === '6399' || d.suggest === '6361') {
+      var re = suggestExpense_(d.sellerName + '\n' + loadDocText_(d.id), settings.industries, enabledCodeMap_());
+      if (re) d.suggest = re;
+    }
     d.rev += 1;
     d.hint = hintText_(d, settings, d.suggest);
     var ctx = docCtx_(docs);
@@ -506,7 +512,7 @@ function postDocVoucher_(p, s) {
     lines = docToLines_({ total: d.total, tax: d.tax, sellerName: d.sellerName, deductible: deductible }, expense, pay, enabled);
     if (!type) type = TRANSFER_PAY_CODES.indexOf(pay) >= 0 ? '轉帳' : '支出';
   }
-  var r = saveVoucherCore_({ date: str_(p.date) || d.date, type: type || '支出', memo: str_(p.memo) || docMemo_(d), lines: lines, source: '單據' }, s);
+  var r = saveVoucherCore_({ date: str_(p.date) || d.date, type: type || '支出', memo: str_(p.memo).slice(0, 100) || docMemo_(d, d.source === '拍照上傳' ? itemNameOf_(loadDocText_(d.id)) : ''), lines: lines, source: '單據' }, s);
 
   var now = nowText_();
   if (deductible !== d.deductible) d.src.deductible = '人工';
@@ -530,7 +536,7 @@ HANDLERS.postDocs = function (p, s) {
   var results = items.map(function (it) {
     try {
       var r = withLock_(function () {
-        return postDocVoucher_({ docId: it.id, rev: it.rev, expense: it.expense, pay: it.pay, deductible: it.deductible, ackWarnings: it.ackWarnings }, s);
+        return postDocVoucher_({ docId: it.id, rev: it.rev, expense: it.expense, pay: it.pay, deductible: it.deductible, ackWarnings: it.ackWarnings, memo: it.memo }, s);
       });
       return { id: it.id, ok: true, no: r.no };
     } catch (e) {
