@@ -974,8 +974,11 @@ function amountAfter_(lines, keywords, exclude) {
     if (!hit || (ex && ex.test(line))) continue;
     // 只看關鍵字後面、下一個標籤（統編、地址、賣方…）之前的那一段，取第一個數字：
     // 電子發票證明聯常把「總計 2,151 統一編號… 地址…18樓」排在同一行，取最後一個數字會讀成 18
-    var rest = line.slice(hit.index + hit[0].length).split(AMOUNT_STOP)[0].replace(/\d+(\.\d+)?\s*[%％]/g, ' '); // 稅率 5% 不是金額
-    var nums = rest.match(/\d[\d,]*(\.\d+)?/g);
+    var rest = line.slice(hit.index + hit[0].length).split(AMOUNT_STOP)[0]
+      .replace(/\d+(\.\d+)?\s*[%％]/g, ' ')                                        // 稅率 5% 不是金額
+      .replace(/\d+\s*(項|件|個|筆|張|份|杯|盒|包|瓶|品|pcs|PCS|items?|ITEMS?)/g, ' '); // 「2 項」是數量不是金額
+    var cur = /(NT\$|\$|新[台臺]幣)\s*(\d[\d,]*(\.\d+)?)/.exec(rest);              // 有幣別記號的優先
+    var nums = cur ? [cur[2]] : rest.match(/\d[\d,]*(\.\d+)?/g);
     if (!nums && i + 1 < lines.length) nums = lines[i + 1].match(/^\s*(NT\$|\$)?\s*(\d[\d,]*(\.\d+)?)\s*元?\s*$/) ? [lines[i + 1]] : null;
     if (!nums) continue;
     var v = moneyOf_(nums[0]);
