@@ -150,6 +150,8 @@ test('財政部進項發票檔：民國日期、引號金額、作廢略過、�
   assert.deepEqual([r.rows[0].net, r.rows[0].tax, r.rows[0].total], [1000, 50, 1050]);
   assert.match(r.skipped[0], /CD11114444/);
   assert.throws(() => app.parseInvoiceCsv_('a,b,c\n1,2,3'), /發票號碼/);
+  assert.throws(() => app.parseInvoiceCsv_('序號,開立日期,金額\n1,2,3'), /第一列是：「序號,開立日期,金額」/);
+  assert.throws(() => app.parseInvoiceCsv_('\uFFFD\uFFFDJFIF\u0000\u0001'), /不是文字格式/);
   const m = plain(app.parseInvoiceCsv_('M|手機條碼|/ABC1234|20261101|' + SELLER + '|某超市|GH12345678|356|開立'));
   assert.deepEqual([m.rows[0].invoiceNo, m.rows[0].date, m.rows[0].total], ['GH12345678', '2026-11-01', 356]);
 });

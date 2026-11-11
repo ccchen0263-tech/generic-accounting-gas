@@ -42,6 +42,17 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     const count = await page.$$eval('#docList .doc-row', (x) => x.length);
     if (count !== 5) fail('待處理應有 5 張，實際 ' + count);
 
+    // 0. 選錯按鈕：照片走匯入、CSV 走照片，都要明確提醒，不能顯示「找不到發票號碼」
+    const tmp = require('os').tmpdir();
+    fs.writeFileSync(path.join(tmp, 'wrong.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16]));
+    fs.writeFileSync(path.join(tmp, 'wrong.csv'), '發票號碼,發票日期,總計\n');
+    await page.setInputFiles('#invFile', path.join(tmp, 'wrong.jpg'));
+    await page.waitForTimeout(300);
+    if (!/請改按「選擇照片或 PDF」/.test(await page.textContent('#upProg'))) fail('照片選到匯入按鈕時沒有提醒');
+    await page.setInputFiles('#docFiles', path.join(tmp, 'wrong.csv'));
+    await page.waitForTimeout(300);
+    const msg2 = await page.textContent('#upProg');
+    if (!/請按「匯入財政部進項發票檔」/.test(msg2) || /找不到/.test(msg2)) fail('CSV 選到照片按鈕時提醒不對：' + msg2);
     // 1. 校正畫面
     await page.locator('#docList .doc-row', { hasText: '大成生鮮' }).locator('.doc-open').click();
     await page.waitForSelector('#modal:not([hidden]) .review');
