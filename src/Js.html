@@ -645,6 +645,19 @@
    * 讀財政部下載檔：先看檔頭判斷真正格式（副檔名可能是 .csv 但內容是 Excel），
    * 再依編碼解碼：UTF-16（Unicode 文字）、UTF-8、Big5
    */
+  /**
+   * 沒有 BOM 時，UTF-8 和 Big5 都試：看得到「發票號碼」等標題字的優先，
+   * 否則選亂碼（\uFFFD）比較少的。整份檔只要有一個壞位元組，UTF-8 嚴格模式就會整份失敗，
+   * 所以不能只靠嚴格模式判斷。
+   */
+  function bestDecode(u8) {
+    var cands = ['utf-8', 'big5'].map(function (enc) {
+      var t = new TextDecoder(enc).decode(u8);
+      return { t: t, key: /發票號碼|發票日期|統一編號|載具/.test(t.slice(0, 4000)) ? 1 : 0, bad: (t.match(/\uFFFD/g) || []).length };
+    });
+    cands.sort(function (a, b) { return b.key - a.key || a.bad - b.bad; });
+    return cands[0].t;
+  }
   function readTextFile(file) {
     return new Promise(function (resolve, reject) {
       var r = new FileReader();
@@ -668,10 +681,7 @@
         var text;
         try {
           if (enc) text = new TextDecoder(enc).decode(u8);
-          else {
-            try { text = new TextDecoder('utf-8', { fatal: true }).decode(u8); }
-            catch (e) { text = new TextDecoder('big5').decode(u8); }
-          }
+          else text = bestDecode(u8);
         } catch (e2) { return reject(new Error('檔案編碼無法辨識')); }
         resolve(text.replace(/^\uFEFF/, ''));
       };
@@ -717,7 +727,7 @@
         '<p class="muted small" style="margin-top:0">可以一次選很多張。<b>一張照片只拍一張單據</b>，拍正、拍清楚、不要反光。支援照片與 PDF（每個檔案 10MB 以內）。系統會讀出日期、發票號碼、統編、金額並檢查，結果要經過人工確認才會入帳。</p>' +
         '<div class="row"><label class="btn primary file-btn">選擇照片或 PDF<input type="file" id="docFiles" multiple accept="image/*,application/pdf" class="sr-only"></label>' +
         (can('importInvoices') ? '<label class="btn file-btn">匯入財政部進項發票檔<input type="file" id="invFile" accept=".csv,.txt,text/csv,text/plain" class="sr-only"></label>' : '') +
-        '</div><div id="upProg" class="small" role="status" aria-live="polite"></div></div>';
+        '</div>' + (can('importInvoices') ? '<p class="muted small" style="margin:8px 0 0">財政部下載的發票檔請<b>直接匯入，不要先用 Excel 打開再存檔</b>，Excel 會把中文讀成亂碼。</p>' : '') + '<div id="upProg" class="small" role="status" aria-live="polite"></div></div>';
     }
     html += '<div class="toolbar"><div class="chips" id="docTabs">' + ['待處理', '異常', '已入帳', '略過', '全部'].map(function (t) {
       return '<button type="button" class="chip' + (t === status ? ' on' : '') + '" data-st="' + t + '">' + t + '<span data-cnt="' + t + '"></span></button>';
