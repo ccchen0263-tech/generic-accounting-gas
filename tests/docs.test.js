@@ -164,6 +164,7 @@ test('上傳 → 原文另存 → 未判定不能入帳 → 人工校正 → 入
   const up = upload(longText, '發票.jpg');
   assert.equal(up.status, '待處理');
   assert.equal(app.__drive.removed.length, 1, 'OCR 暫存文件要刪掉');
+  assert.equal(app.__drive.ocrCalls[0].opts.ocrLanguage, 'zh', 'Drive API v3 語言提示要用兩碼 zh（zh-TW 會被拒絕）');
   // 原文完整保存在「單據原文」，超過 40,000 字分多列
   const d0 = call('getDoc', { id: up.id });
   assert.equal(d0.text, longText);

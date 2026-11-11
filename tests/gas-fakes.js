@@ -257,6 +257,7 @@
       Drive: {
         Files: {
           create: function (meta, blob, opts) {
+            if (opts && opts.ocrLanguage && !/^[a-z]{2}$/.test(opts.ocrLanguage)) throw new Error('API call to drive.files.create failed with error: Invalid Value');
             drive.ocrCalls.push({ meta: meta, opts: opts, name: blob.getName() });
             var id = 'doc-' + (++drive.seq);
             drive.docs[id] = drive.ocrQueue.length ? drive.ocrQueue.shift() : '';
