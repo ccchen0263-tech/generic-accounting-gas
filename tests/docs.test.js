@@ -142,6 +142,38 @@ test('建議科目：依賣方名稱與產業', () => {
   assert.equal(app.suggestExpense_('不知名商店', ['餐飲'], on), '6399');
 });
 
+test('電子發票證明聯（A4 版面，雲端硬碟 OCR 實際輸出，名稱與統編已換成測試資料）', () => {
+  const app = loadApp();
+  const text = '電子發票證明聯 \n2026-11-04 \n發票號碼：HH40907524 格　　式：25 買　　方：測試買方股份有限公司 \n統一編號：' + OWN + ' \n地　　址： 第 1 頁／共 1 頁 \n' +
+    '品名 數量 單價 金額 備註 線上金流服務費 1 2,049 2,049 1BFS_X.EC \n銷售額合計 2,049 營業人蓋統一發票專用章 (已條列營業人資料者得免蓋章) \n' +
+    '營業稅 應稅 √ 零稅率 免稅 102 賣　　方：範例網路股份有限公司 \n總計 2,151 統一編號：' + SELLER + ' 總計新台幣(中文大寫) 地　　址：臺北市南港區經貿二路121號18樓 \n貳仟壹佰伍拾壹元整';
+  for (const own of [{}, { taxId: OWN, name: '公版餐飲有限公司' }, { taxId: '12345675', name: '別家公司' }]) {
+    const r = plain(app.parseReceiptText_(text, own));
+    assert.equal(r.invoiceNo, 'HH40907524');
+    assert.equal(r.date, '2026-11-04');
+    assert.equal(r.sellerName, '範例網路股份有限公司');
+    assert.equal(r.sellerTaxId, SELLER, '賣方統編要取「賣方」後面的那個');
+    assert.equal(r.buyerTaxId, OWN);
+    assert.deepEqual([r.net, r.tax, r.total], [2049, 102, 2151]);
+    assert.deepEqual([r.src.net, r.src.tax, r.src.total], ['原文', '原文', '原文']);
+  }
+});
+
+test('金額與賣方的邊界情況（Codex 審查）', () => {
+  const app = loadApp();
+  assert.equal(plain(app.parseReceiptText_('合計 新臺幣 3,200 元', {})).total, 3200);
+  assert.equal(plain(app.parseReceiptText_('總計 新台幣 1,050 元', {})).total, 1050);
+  const r = plain(app.parseReceiptText_('銷售額 1,000\n營業稅 5% 50\n總計 1,050', {}));
+  assert.deepEqual([r.net, r.tax, r.total], [1000, 50, 1050]);
+  assert.equal(plain(app.parseReceiptText_('賣方：大成 生鮮食品有限公司\n總計 100', {})).sellerName, '大成 生鮮食品有限公司');
+  const b = plain(app.parseReceiptText_('買受人：公版餐飲有限公司 統一編號 ' + OWN + '\n大成生鮮食品有限公司\n統一編號 ' + SELLER + '\n總計 100', { taxId: OWN }));
+  assert.equal(b.sellerTaxId, SELLER);
+  assert.equal(b.buyerTaxId, OWN);
+  const c = plain(app.parseReceiptText_('買受人：公版餐飲有限公司 統一編號 ' + OWN + '\n大成生鮮食品有限公司\n統一編號 ' + SELLER + '\n總計 100', {}));
+  assert.equal(c.sellerTaxId, SELLER);
+  assert.equal(c.buyerTaxId, OWN);
+});
+
 test('財政部進項發票檔：民國日期、引號金額、作廢略過、載具格式', () => {
   const app = loadApp();
   const r = plain(app.parseInvoiceCsv_(CSV));
