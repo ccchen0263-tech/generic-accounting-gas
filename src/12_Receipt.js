@@ -372,7 +372,13 @@ function parseInvoiceCsv_(text) {
     var cells = splitCsvLine_(lines[i], s);
     if (cells.some(function (c) { return INVOICE_COLUMNS.invoiceNo.indexOf(c.replace(/\s/g, '')) >= 0; })) { headIdx = i; head = cells.map(function (c) { return c.replace(/\s/g, ''); }); sep = s; break; }
   }
-  if (headIdx < 0) throw new Error('看不懂這個檔案：找不到「發票號碼」欄位。請下載財政部的 CSV 檔，或把檔案傳給系統管理者確認格式。');
+  if (headIdx < 0) {
+    var first = (lines[0] || '').replace(/\s+/g, ' ').trim();
+    var binary = /[\u0000-\u0008\uFFFD]/.test(first) || /^(\x89PNG|%PDF|PK|ÿØÿ)/.test(first);
+    throw new Error(binary
+      ? '這不是文字格式的 CSV 檔（看起來是照片、PDF 或 Excel）。照片和 PDF 請按「選擇照片或 PDF」；財政部發票請下載 CSV 格式。'
+      : '看不懂這個檔案：找不到「發票號碼」欄位。檔案第一列是：「' + first.slice(0, 120) + (first.length > 120 ? '…' : '') + '」。請把這段文字或檔案傳給系統管理者確認格式。');
+  }
   var col = {};
   Object.keys(INVOICE_COLUMNS).forEach(function (k) {
     var names = INVOICE_COLUMNS[k];

@@ -1022,11 +1022,18 @@
     // ── 上傳與匯入 ──
     var files = $('#docFiles');
     if (files) files.onchange = function () {
-      var list = Array.prototype.slice.call(files.files);
+      var picked = Array.prototype.slice.call(files.files);
       files.value = '';
-      if (!list.length) return;
       var prog = $('#upProg');
+      prog.innerHTML = '';
       var done = [], failed = [];
+      // 財政部 CSV、Excel 不是照片：提醒改用匯入按鈕
+      var list = picked.filter(function (f) {
+        if (/\.(csv|txt|xlsx?|xml)$/i.test(f.name)) { failed.push(f.name + ' 不是照片或 PDF；財政部發票檔請按「匯入財政部進項發票檔」'); return false; }
+        return true;
+      });
+      if (!picked.length) return;
+      if (!list.length) { prog.innerHTML = '<div class="notice warn" style="margin:10px 0 0">' + failed.map(esc).join('<br>') + '</div>'; return; }
       var step = function (i) {
         if (i >= list.length) {
           var dup = done.filter(function (d) { return d.status === '重複'; }).length;
@@ -1050,6 +1057,11 @@
       var f = inv.files[0];
       inv.value = '';
       if (!f) return;
+      var box = $('#upProg');
+      var warnBox = function (msg) { box.innerHTML = '<div class="notice warn" style="margin:10px 0 0">' + esc(msg) + '</div>'; };
+      if (/^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic|heif|pdf)$/i.test(f.name)) return warnBox('「' + f.name + '」是照片或 PDF，請改按「選擇照片或 PDF」上傳。這個按鈕只匯入財政部下載的 CSV 檔。');
+      if (/\.xlsx?$/i.test(f.name)) return warnBox('「' + f.name + '」是 Excel 檔。請在財政部網站下載時選 CSV 格式，或在 Excel「另存新檔」選 CSV（UTF-8）。');
+      box.textContent = '讀取「' + f.name + '」中…';
       readTextFile(f).then(function (text) { return call('importInvoices', { text: text, fileName: f.name }); }).then(function (r) {
         $('#upProg').innerHTML = '<div class="notice good" style="margin:10px 0 0">匯入 ' + r.added + ' 張發票' +
           (r.duplicates.length ? '；' + r.duplicates.length + ' 張之前已經有了，沒有重複建立' : '') +
