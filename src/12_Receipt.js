@@ -36,6 +36,7 @@ function moneyOf_(s) {
 /** 找出「關鍵字」後面最近的金額（同一行或下一行） */
 var AMOUNT_STOP = /統一編號|統編|地\s*址|電\s*話|賣\s*方|買\s*(受人|方)|營業人|中文大寫/;
 /** 電子發票證明聯的課稅別勾選欄「應稅 √ 零稅率 免稅」不是金額說明，先拿掉，避免整行被當成免稅排除 */
+var FIELD_STOP = /現金|找零|找回|實收|收現|信用卡|刷卡|付款|營業稅|稅額|銷售額|未稅|小計|總計|合計|總金額|應付|TAX|Tax|TOTAL|Total/;
 var TAX_TYPE_BOX = /應稅\s*[√✓VvＶ]?\s*零稅率\s*[√✓VvＶ]?\s*免稅\s*[√✓VvＶ]?/g;
 function amountAfter_(lines, keywords, exclude) {
   var re = new RegExp('(' + keywords.join('|') + ')');
@@ -47,8 +48,14 @@ function amountAfter_(lines, keywords, exclude) {
     if (!hit || (ex && ex.test(line))) continue;
     // 只看關鍵字後面、下一個標籤（統編、地址、賣方…）之前的那一段，取第一個數字：
     // 電子發票證明聯常把「總計 2,151 統一編號… 地址…18樓」排在同一行，取最後一個數字會讀成 18
-    var rest = line.slice(hit.index + hit[0].length).split(AMOUNT_STOP)[0].replace(/\d+(\.\d+)?\s*[%％]/g, ' '); // 稅率 5% 不是金額
-    var nums = rest.match(/\d[\d,]*(\.\d+)?/g);
+    var rest = line.slice(hit.index + hit[0].length).split(AMOUNT_STOP)[0]
+      .replace(/\d+(\.\d+)?\s*[%％]/g, ' ')                                                         // 稅率 5% 不是金額
+      .replace(/(^|[^\d,.])\d+\s*(項|件|個|筆|張|份|杯|盒|包|瓶|pcs|PCS|items?|ITEMS?)(?![數目次])/g, '$1 '); // 「2 項」是數量不是金額
+    // 數字出現之後，遇到另一個金額欄位（現金、找零、營業稅…）就停，不讓別的欄位的金額混進來
+    var firstDigit = rest.search(/\d/);
+    if (firstDigit >= 0) rest = rest.slice(0, firstDigit) + rest.slice(firstDigit).split(FIELD_STOP)[0];
+    var cur = /(NT\$|\$|新[台臺]幣)\s*(\d[\d,]*(\.\d+)?)/.exec(rest);              // 有幣別記號的優先
+    var nums = cur ? [cur[2]] : rest.match(/\d[\d,]*(\.\d+)?/g);
     if (!nums && i + 1 < lines.length) nums = lines[i + 1].match(/^\s*(NT\$|\$)?\s*(\d[\d,]*(\.\d+)?)\s*元?\s*$/) ? [lines[i + 1]] : null;
     if (!nums) continue;
     var v = moneyOf_(nums[0]);
