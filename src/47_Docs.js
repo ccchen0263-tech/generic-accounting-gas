@@ -403,7 +403,7 @@ HANDLERS.updateDoc = function (p, s) {
       if (!Object.prototype.hasOwnProperty.call(f, k) || String(f[k]) === String(d[k])) return;
       changes.push((DOC_FIELD_NAMES[k] || (k === 'deductible' ? '扣抵判定' : '科目')) + '：' + (d[k] === '' ? '（空）' : d[k]) + ' → ' + (f[k] === '' ? '（空）' : f[k]));
       d[k] = f[k];
-      if (k !== 'suggest') d.src[k] = '人工';
+      d.src[k] = '人工'; // 科目也記來源：重新解析不會蓋掉人工選的科目
     });
     var settings = loadSettings_();
     d.hint = hintText_(d, settings, d.suggest);
@@ -435,7 +435,7 @@ HANDLERS.reparseDoc = function (p, s) {
     });
     d.parserVersion = PARSER_VERSION;
     // 原本只是「雜費／消耗品」這種找不到規則的預設科目時，依新規則重新建議
-    if (!d.suggest || d.suggest === '6399' || d.suggest === '6361') {
+    if (d.src.suggest !== '人工' && (!d.suggest || d.suggest === '6399' || d.suggest === '6361')) {
       var re = suggestExpense_(d.sellerName + '\n' + loadDocText_(d.id), settings.industries, enabledCodeMap_());
       if (re) d.suggest = re;
     }

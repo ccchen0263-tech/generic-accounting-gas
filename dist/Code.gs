@@ -1099,7 +1099,8 @@ function parseReceiptText_(text, own) {
 
 /** 依關鍵字建議費用科目；食材依產業區分 */
 var EXPENSE_RULES = [
-  [/手續費|金流|LINE\s*Pay|街口支付|綠界|藍新|刷卡服務/i, '6331'],
+  // 只有「金流服務費／手續費」才算；收據上寫「付款方式：LINE Pay」不算
+  [/手續費|金流服務|(LINE\s*Pay|街口|綠界|藍新|刷卡)[^\n]{0,8}(服務費|手續費)/i, '6331'],
   [/中華電信|台灣大哥大|遠傳|亞太電信|電信|寬頻|網路費|電話費/, '6161'],
   [/台灣電力|台電|電費|自來水|水費|瓦斯|天然氣|欣[^\s]{0,2}瓦斯/, '6191'],
   [/加油站|中油|台塑石化|全國加油|停車|計程車|高鐵|臺鐵|台鐵|客運|ETC|遠通/, '6142'],
@@ -3226,7 +3227,7 @@ HANDLERS.updateDoc = function (p, s) {
       if (!Object.prototype.hasOwnProperty.call(f, k) || String(f[k]) === String(d[k])) return;
       changes.push((DOC_FIELD_NAMES[k] || (k === 'deductible' ? '扣抵判定' : '科目')) + '：' + (d[k] === '' ? '（空）' : d[k]) + ' → ' + (f[k] === '' ? '（空）' : f[k]));
       d[k] = f[k];
-      if (k !== 'suggest') d.src[k] = '人工';
+      d.src[k] = '人工'; // 科目也記來源：重新解析不會蓋掉人工選的科目
     });
     var settings = loadSettings_();
     d.hint = hintText_(d, settings, d.suggest);
@@ -3258,7 +3259,7 @@ HANDLERS.reparseDoc = function (p, s) {
     });
     d.parserVersion = PARSER_VERSION;
     // 原本只是「雜費／消耗品」這種找不到規則的預設科目時，依新規則重新建議
-    if (!d.suggest || d.suggest === '6399' || d.suggest === '6361') {
+    if (d.src.suggest !== '人工' && (!d.suggest || d.suggest === '6399' || d.suggest === '6361')) {
       var re = suggestExpense_(d.sellerName + '\n' + loadDocText_(d.id), settings.industries, enabledCodeMap_());
       if (re) d.suggest = re;
     }

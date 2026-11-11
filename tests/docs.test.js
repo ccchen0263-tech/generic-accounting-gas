@@ -171,6 +171,7 @@ test('傳票摘要：寫品名＋發票號碼，讀不到品名才用賣方', ()
   assert.equal(app.docMemo_({ sellerName: '範例網路股份有限公司', invoiceNo: 'HH40907524' }, ''), '範例網路股份有限公司 HH40907524');
   const on = { 6331: true, 6399: true };
   assert.equal(app.suggestExpense_('範例網路股份有限公司\nLINE Pay 服務費', ['餐飲'], on), '6331');
+  assert.equal(app.suggestExpense_('大成生鮮食品有限公司\n豬肉 1 100\n付款方式：LINE Pay', ['餐飲'], { 5171: true, 6331: true, 6399: true }), '5171', '只是用 LINE Pay 付款不算手續費');
 });
 
 test('金額與賣方的邊界情況（Codex 審查）', () => {
@@ -371,6 +372,16 @@ test('人工校正：版本衝突、格式檢查、重新解析保留人工欄�
   assert.equal(rp.total, 10600, '人工欄位不被覆蓋');
   assert.equal(rp.net, 10000);
   assert.equal(rp.src.total, '人工');
+});
+
+test('重新解析：人工選的科目不被蓋掉；預設雜費才重新建議', () => {
+  const { call, upload } = books();
+  const a = upload('範例網路股份有限公司\nLINE Pay 服務費\n總計 2,151', 'a.jpg');
+  const d = call('getDoc', { id: a.id });
+  assert.equal(d.suggest, '6331');
+  const m = call('updateDoc', { id: a.id, rev: d.rev, fields: { suggest: '6399' } });
+  assert.equal(call('reparseDoc', { id: a.id }).suggest, '6399', '人工選的雜費要保留');
+  assert.ok(m);
 });
 
 test('權限：助理只能上傳與查看；畫面不能偽造傳票來源', () => {
