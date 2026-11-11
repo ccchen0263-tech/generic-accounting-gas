@@ -279,6 +279,41 @@ test('電子發票證明聯上傳：建議手續費科目、摘要帶品名；�
   assert.equal(call('getVoucher', { no: r2.results[0].no }).memo, '十月 LINE Pay 金流服務費');
 });
 
+// 財政部「M／D」格式（欄位順序依實際下載檔；名稱、統編、號碼都是測試資料）
+const MOF_MD = [
+  'M,發票號碼,買受人註記欄,格式代號,發票狀態,發票日期,買方統一編號,買方名稱,賣方統一編號,賣方名稱,寄送日期,銷售額合計,應稅銷售額,零稅率銷售額,免稅銷售額,營業稅,總計,課稅別,匯率,載具類別編號,載具號碼1,載具號碼2,總備註,確認日期,最後異動日期,MIG訊息類別,傳送方統編,傳送方名稱,',
+  'D,發票號碼,發票日期,序號,品名,數量,單位,單價,金額,單一欄位備註,相關號碼,,,,,,,,,,,,,,,,,,',
+  'M,EJ17530001,,25,已確認,2026-09-01 18:56:00,' + OWN + ',' + OWN + ',' + SELLER + ',範例加油站,2026-09-01,1143,1143,0,0,57,1200,應稅,0,,,,,2026-09-01 23:33,2026-09-01 23:33,F0401,' + SELLER + ',範例加油站,',
+  'D,EJ17530001,2026-09-01 18:56,1,98無鉛汽油,36.35,ST,34,1236,,,,,,,,,,,,,,,,,,,,',
+  'D,EJ17530001,2026-09-01 18:56,2,折扣,1,ST,-36,-36,,,,,,,,,,,,,,,,,,,,',
+  'M,EJ17530002,,25,已確認,2026-09-03 20:53:47,' + OWN + ',' + OWN + ',573951,範例文具行,2026-09-03,300,300,0,0,15,315,應稅,0,,,,,2026-09-03 23:33,2026-09-03 23:33,F0401,573951,範例文具行,',
+  'D,EJ17530002,2026-09-03 20:53,1,影印紙,1,包,100,100,,,,,,,,,,,,,,,,,,,,',
+  'D,EJ17530002,2026-09-03 20:53,2,原子筆,10,支,10,100,,,,,,,,,,,,,,,,,,,,',
+  'D,EJ17530002,2026-09-03 20:53,3,資料夾,5,個,10,50,,,,,,,,,,,,,,,,,,,,',
+  'D,EJ17530002,2026-09-03 20:53,4,膠帶,5,個,10,50,,,,,,,,,,,,,,,,,,,,',
+  'M,EJ17530003,,25,作廢,2026-09-05 10:00:00,' + OWN + ',' + OWN + ',' + SELLER + ',範例加油站,2026-09-05,100,100,0,0,5,105,應稅,0,,,,,,,F0501,,,'
+].join('\r\n');
+
+test('財政部 M／D 格式：D 列當品名不當發票、統編補 0、作廢略過；匯入後摘要帶品名', () => {
+  const app = loadApp();
+  const r = plain(app.parseInvoiceCsv_(MOF_MD));
+  assert.equal(r.rows.length, 2, JSON.stringify(r));
+  assert.deepEqual(r.rows.map((x) => [x.invoiceNo, x.date, x.sellerTaxId, x.net, x.tax, x.total]),
+    [['EJ17530001', '2026-09-01', SELLER, 1143, 57, 1200], ['EJ17530002', '2026-09-03', '00573951', 300, 15, 315]]);
+  assert.deepEqual(r.rows.map((x) => x.items), ['98無鉛汽油', '影印紙、原子筆、資料夾等']);
+  assert.equal(r.skipped.length, 1, '只有作廢那張被略過，D 列不能出現在略過清單：' + r.skipped.join('；'));
+
+  const { call } = books();
+  const im = call('importInvoices', { text: MOF_MD, fileName: 'mof.csv' });
+  assert.equal(im.added, 2);
+  const list = call('listDocs', { status: '全部' }).docs;
+  const d = call('getDoc', { id: list.find((x) => x.invoiceNo === 'EJ17530002').id });
+  assert.equal(d.item, '影印紙、原子筆、資料夾等');
+  const post = call('postDocs', { items: [itemOf(call, d.id, { pay: '2131', deductible: '可扣抵' })] });
+  assert.equal(post.ok, 1, JSON.stringify(post.results));
+  assert.equal(call('getVoucher', { no: post.results[0].no }).memo, '影印紙、原子筆、資料夾等 EJ17530002');
+});
+
 test('防重複入帳：同號發票只能入帳一次；改回待處理也擋得住；作廢後才能改入另一張', () => {
   const { call, upload } = books();
   const a = upload(HANDWRITTEN, 'a.jpg');

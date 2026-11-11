@@ -1190,7 +1190,7 @@ function itemNameOf_(text) {
   var items = [];
   for (var i = 0; i < lines.length; i++) {
     var lab = /品\s*名\s*[:：]\s*(.+)$/.exec(lines[i]);
-    if (lab) { var one = clean(lab[1]); if (one) items.push(one); continue; }
+    if (lab) { var one = /、/.test(lab[1]) ? lab[1].trim().slice(0, 60) : clean(lab[1]); if (one) items.push(one); continue; }
     var h = HEAD.exec(lines[i]);
     if (!h) continue;
     var first = clean(lines[i].slice(h.index + h[0].length));
@@ -1346,6 +1346,18 @@ var INVOICE_COLUMNS = {
  * 欄位以標題名稱對應（不固定欄位順序），也支援手機條碼載具的「M|…」格式。
  * 回傳 { rows: [...], skipped: [...說明] }
  */
+/** 統編被 Excel 去掉開頭的 0（00573951 → 573951）時補回 8 碼 */
+function taxId8_(v) {
+  var t = str_(v).replace(/\s/g, '');
+  return /^\d{1,7}$/.test(t) ? ('0000000' + t).slice(-8) : t;
+}
+
+/** 品名清單 → 「A、B、C等」（去重複，最多 3 項） */
+function itemsLabel_(list) {
+  var u = list.map(function (x) { return str_(x).slice(0, 30); }).filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+  return u.slice(0, 3).join('、') + (u.length > 3 ? '等' : '');
+}
+
 function parseInvoiceCsv_(text) {
   var lines = String(text || '').replace(/^﻿/, '').split(/\r?\n/).filter(function (l) { return l.trim(); });
   var rows = [], skipped = [];
@@ -1389,8 +1401,21 @@ function parseInvoiceCsv_(text) {
   if (col.date === undefined) throw new Error('檔案中找不到「發票日期」欄位');
   if (col.total === undefined && col.net === undefined) throw new Error('檔案中找不到金額欄位（總計或銷售額）');
 
+  // 財政部「M／D」格式：M 列是發票、D 列是品項明細（D 列有自己的標題列「D,發票號碼,發票日期,序號,品名…」）
+  var md = head[0] === 'M';
+  var dItem = 4, dAmt = 8, items = {};
   lines.slice(headIdx + 1).forEach(function (l, k) {
     var c = splitCsvLine_(l, sep);
+    if (md && c[0] !== 'M') {
+      if (c[0] !== 'D') return;
+      if (c.some(function (x) { return x.replace(/\s/g, '') === '品名'; })) {
+        c.forEach(function (x, j) { var h = x.replace(/\s/g, ''); if (h === '品名') dItem = j; if (h === '金額') dAmt = j; });
+        return;
+      }
+      var dn = str_(c[1]).replace(/[-\s]/g, '').toUpperCase(), nm = str_(c[dItem]);
+      if (/^[A-Z]{2}\d{8}$/.test(dn) && nm && !(moneyOf_(c[dAmt]) < 0)) (items[dn] = items[dn] || []).push(nm); // 負數是折扣，不算品名
+      return;
+    }
     var get = function (key) { return col[key] === undefined ? '' : str_(c[col[key]]); };
     var no = get('invoiceNo').replace(/[-\s]/g, '').toUpperCase();
     if (!/^[A-Z]{2}\d{8}$/.test(no)) { if (no) skipped.push('第 ' + (headIdx + k + 2) + ' 列發票號碼「' + no + '」格式不對'); return; }
@@ -1403,8 +1428,9 @@ function parseInvoiceCsv_(text) {
     if (isNaN(total)) total = (isNaN(net) ? 0 : net) + tax;
     if (isNaN(net)) net = total - tax;
     if (!total) { skipped.push(no + ' 金額為 0'); return; }
-    rows.push({ invoiceNo: no, date: date, sellerTaxId: get('sellerTaxId'), sellerName: get('sellerName'), buyerTaxId: get('buyerTaxId'), net: net, tax: tax, total: total, status: status });
+    rows.push({ invoiceNo: no, date: date, sellerTaxId: taxId8_(get('sellerTaxId')), sellerName: get('sellerName'), buyerTaxId: taxId8_(get('buyerTaxId')), net: net, tax: tax, total: total, status: status });
   });
+  rows.forEach(function (r) { r.items = itemsLabel_(items[r.invoiceNo] || []); });
   return { rows: rows, skipped: skipped };
 }
 
@@ -3068,7 +3094,7 @@ HANDLERS.getDoc = function (p) {
   checkDoc_(d, ctx);
   var v = docView_(d, ctx, enabled);
   v.text = loadDocText_(d.id);
-  v.item = d.source === '拍照上傳' ? itemNameOf_(v.text) : '';
+  v.item = itemNameOf_(v.text);
   v.payAccounts = payAccounts_(enabled);
   v.kinds = DOC_KINDS;
   if (p.expense && p.pay) {
@@ -3164,7 +3190,7 @@ HANDLERS.importInvoices = function (p, s) {
       var src = { invoiceNo: '匯入', date: '匯入', sellerName: '匯入', sellerTaxId: '匯入', buyerTaxId: '匯入', net: '匯入', tax: '匯入', total: '匯入' };
       // 進項發票檔本來就是本公司的進項；檔案沒有買方欄時以本公司統編補上，並標示推算
       if (!r.buyerTaxId) src.buyerTaxId = '推算';
-      var suggest = suggestExpense_(r.sellerName, settings.industries, enabled);
+      var suggest = suggestExpense_(r.sellerName + '\n' + (r.items || ''), settings.industries, enabled);
       var d = {
         id: ids[i], source: '財政部匯入', kind: '電子發票', status: DOC_STATUS.PENDING,
         date: r.date, invoiceNo: r.invoiceNo, sellerName: r.sellerName, sellerTaxId: r.sellerTaxId, buyerTaxId: r.buyerTaxId || settings.taxId,
@@ -3176,6 +3202,10 @@ HANDLERS.importInvoices = function (p, s) {
     });
     var ctx = docCtx_(docs.concat(made));
     appendObjects_(SHEETS.DOCS, made.map(function (d) { return docToObj_(checkDoc_(d, ctx)); }));
+    // 財政部檔有品項明細（D 列）時，把品名存成原文，傳票摘要就能寫「買了什麼」
+    var texts = [];
+    fresh.forEach(function (r, i) { if (r.items) texts.push({ '單據編號': made[i].id, '引擎': '財政部匯入', '段落': 1, '原始文字': '品名：' + r.items, '擷取時間': now }); });
+    if (texts.length) appendObjects_(SHEETS.DOC_TEXT, texts);
     log_(s.username, '匯入進項發票', str_(p.fileName) + '：新增 ' + made.length + ' 張，重複 ' + dups.length + ' 張，略過 ' + parsed.skipped.length + ' 列');
     return { added: made.length, duplicates: dups, skipped: parsed.skipped };
   });
@@ -3336,7 +3366,7 @@ function postDocVoucher_(p, s) {
     lines = docToLines_({ total: d.total, tax: d.tax, sellerName: d.sellerName, deductible: deductible }, expense, pay, enabled);
     if (!type) type = TRANSFER_PAY_CODES.indexOf(pay) >= 0 ? '轉帳' : '支出';
   }
-  var r = saveVoucherCore_({ date: str_(p.date) || d.date, type: type || '支出', memo: str_(p.memo).slice(0, 100) || docMemo_(d, d.source === '拍照上傳' ? itemNameOf_(loadDocText_(d.id)) : ''), lines: lines, source: '單據' }, s);
+  var r = saveVoucherCore_({ date: str_(p.date) || d.date, type: type || '支出', memo: str_(p.memo).slice(0, 100) || docMemo_(d, itemNameOf_(loadDocText_(d.id))), lines: lines, source: '單據' }, s);
 
   var now = nowText_();
   if (deductible !== d.deductible) d.src.deductible = '人工';
