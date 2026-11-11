@@ -883,8 +883,11 @@
     function openReview(id) {
       return call('getDoc', { id: id }).then(function (d) { showReview(d); }).catch(function (e) { toast(e.message, true); });
     }
+    var memoDraft = null; // 使用者自己改過的摘要：{ id, value }，重新顯示時保留
+    function defaultMemo(d) { return [d.item || d.sellerName || d.kind || '單據', d.invoiceNo].filter(function (x) { return x; }).join(' '); }
     function showReview(d) {
       var editable = d.open && can('updateDoc');
+      var memoVal = memoDraft && memoDraft.id === d.id ? memoDraft.value : defaultMemo(d);
       var canPost = d.open && can('postDocs');
       var dis = editable ? '' : ' disabled';
       var body = openModal('校正單據 ' + d.id + '｜' + coName(),
@@ -911,6 +914,7 @@
         '<p class="small muted" style="margin:4px 0 0">系統建議：<b>' + esc(d.hintSuggest) + '</b>（' + esc(d.hintReason) + '）。建議只供參考，請依實際用途判定。</p></fieldset>' +
         (canPost ? '<div class="rv-grid"><label class="fld">費用科目<input list="acctList" id="rvExp" value="' + esc(d.suggest ? acctLabel(d.suggest) : '') + '"></label>' +
           '<label class="fld">付款方式<select id="rvPay">' + d.payAccounts.map(function (x) { return '<option value="' + esc(x.code) + '"' + (x.code === payDefault(d.payAccounts, d) ? ' selected' : '') + '>' + esc(x.label) + '</option>'; }).join('') + '</select></label></div>' +
+          '<label class="fld">傳票摘要<input id="rvMemo" maxlength="100" value="' + esc(memoVal) + '"><span class="small muted">寫買了什麼（品名）；科目和往來對象會另外記錄，不用重複</span></label>' +
           (d.issues.some(function (i) { return i.level === '警示'; }) ? '<label class="check"><input type="checkbox" id="rvAck">我已對照原始單據核對上面的警示</label>' : '') : '') +
         '<p class="error-text" id="rvErr" role="alert"></p>' +
         '<div class="modal-foot">' +
@@ -930,7 +934,11 @@
         var diff = n + t - tot;
         $('#rvSum', body).innerHTML = '未稅 ' + fmt(n) + ' ＋ 稅額 ' + fmt(t) + ' ＝ ' + fmt(n + t) + (tot ? (Math.abs(diff) > 1 ? '　<span class="diff-bad">與總額相差 ' + fmt(diff) + '</span>' : '　<span class="diff-ok">與總額相符</span>') : '');
       }
-      body.addEventListener('input', function () { err.textContent = ''; sumLine(); });
+      body.addEventListener('input', function (ev) {
+        err.textContent = ''; sumLine();
+        if (ev.target && ev.target.id === 'rvMemo') memoDraft = { id: d.id, value: ev.target.value };
+      });
+      var memoOf = function () { var m = $('#rvMemo', body); return m ? m.value.trim() : ''; };
       sumLine();
       function changes() {
         var f = {};
@@ -947,14 +955,14 @@
       function save(confirm) {
         var f = changes();
         if (!Object.keys(f).length && !confirm) return Promise.resolve(d);
-        return call('updateDoc', { id: d.id, rev: d.rev, fields: f, confirm: !!confirm }).then(function (nd) { nd.text = d.text; nd.payAccounts = d.payAccounts; nd.kinds = d.kinds; d = nd; return nd; });
+        return call('updateDoc', { id: d.id, rev: d.rev, fields: f, confirm: !!confirm }).then(function (nd) { nd.text = d.text; nd.item = d.item; nd.payAccounts = d.payAccounts; nd.kinds = d.kinds; d = nd; return nd; });
       }
-      $('#rvClose', body).onclick = function () { closeModal(); load(); };
+      $('#rvClose', body).onclick = function () { memoDraft = null; closeModal(); load(); };
       if ($('#rvSave', body)) $('#rvSave', body).onclick = function () {
         save(true).then(function (nd) { toast('已儲存 ' + nd.id); showReview(nd); }).catch(function (e) { err.textContent = e.message; });
       };
       if ($('#rvReparse', body)) $('#rvReparse', body).onclick = function () {
-        call('reparseDoc', { id: d.id }).then(function (nd) { nd.text = d.text; nd.payAccounts = d.payAccounts; nd.kinds = d.kinds; toast('已重新解析（人工改過的欄位不變）'); showReview(nd); }).catch(function (e) { err.textContent = e.message; });
+        call('reparseDoc', { id: d.id }).then(function (nd) { nd.text = d.text; nd.item = d.item; nd.payAccounts = d.payAccounts; nd.kinds = d.kinds; toast('已重新解析（人工改過的欄位不變）'); showReview(nd); }).catch(function (e) { err.textContent = e.message; });
       };
       if ($('#rvSkip', body)) $('#rvSkip', body).onclick = function () {
         ask('略過單據 ' + d.id, '略過的單據不會入帳，之後可以在「略過」分頁改回待處理。', { input: '略過原因（例如：重複拍照、私人消費）', okText: '略過' }).then(function (reason) {
@@ -999,12 +1007,12 @@
         rememberPay(p.pay);
         saveThenCheck().then(function (nd) {
           if (!nd) return null;
-          return call('postDocs', { items: [{ id: nd.id, rev: nd.rev, expense: p.expense, pay: p.pay, deductible: p.deductible, ackWarnings: p.ack ? warnKeys(nd) : [] }] });
+          return call('postDocs', { items: [{ id: nd.id, rev: nd.rev, expense: p.expense, pay: p.pay, deductible: p.deductible, ackWarnings: p.ack ? warnKeys(nd) : [], memo: memoOf() }] });
         }).then(function (r) {
           if (!r) return;
           var x = r.results[0];
           if (!x.ok) { err.textContent = x.error; return; }
-          closeModal(); toast(d.id + ' 已入帳，傳票 ' + x.no); load();
+          memoDraft = null; closeModal(); toast(d.id + ' 已入帳，傳票 ' + x.no); load();
         }).catch(function (e) { err.textContent = e.message; });
       };
       if ($('#rvEditor', body)) $('#rvEditor', body).onclick = function () {
@@ -1018,7 +1026,7 @@
         }).then(function (g) {
           if (!g) return;
           g.deductible = p.deductible; g.rev = reviewed.rev; g.ackWarnings = p.ack ? warnKeys(reviewed) : [];
-          voucherEditor({ date: g.date || today(), type: g.voucherType, memo: g.memo, lines: g.lines }, load, true, { doc: g });
+          voucherEditor({ date: g.date || today(), type: g.voucherType, memo: memoOf() || g.memo, lines: g.lines }, load, true, { doc: g });
         }).catch(function (e) { err.textContent = e.message; });
       };
     }
