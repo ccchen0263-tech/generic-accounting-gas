@@ -244,7 +244,7 @@ HANDLERS.getDoc = function (p) {
   checkDoc_(d, ctx);
   var v = docView_(d, ctx, enabled);
   v.text = loadDocText_(d.id);
-  v.item = d.source === '拍照上傳' ? itemNameOf_(v.text) : '';
+  v.item = itemNameOf_(v.text);
   v.payAccounts = payAccounts_(enabled);
   v.kinds = DOC_KINDS;
   if (p.expense && p.pay) {
@@ -340,7 +340,7 @@ HANDLERS.importInvoices = function (p, s) {
       var src = { invoiceNo: '匯入', date: '匯入', sellerName: '匯入', sellerTaxId: '匯入', buyerTaxId: '匯入', net: '匯入', tax: '匯入', total: '匯入' };
       // 進項發票檔本來就是本公司的進項；檔案沒有買方欄時以本公司統編補上，並標示推算
       if (!r.buyerTaxId) src.buyerTaxId = '推算';
-      var suggest = suggestExpense_(r.sellerName, settings.industries, enabled);
+      var suggest = suggestExpense_(r.sellerName + '\n' + (r.items || ''), settings.industries, enabled);
       var d = {
         id: ids[i], source: '財政部匯入', kind: '電子發票', status: DOC_STATUS.PENDING,
         date: r.date, invoiceNo: r.invoiceNo, sellerName: r.sellerName, sellerTaxId: r.sellerTaxId, buyerTaxId: r.buyerTaxId || settings.taxId,
@@ -352,6 +352,10 @@ HANDLERS.importInvoices = function (p, s) {
     });
     var ctx = docCtx_(docs.concat(made));
     appendObjects_(SHEETS.DOCS, made.map(function (d) { return docToObj_(checkDoc_(d, ctx)); }));
+    // 財政部檔有品項明細（D 列）時，把品名存成原文，傳票摘要就能寫「買了什麼」
+    var texts = [];
+    fresh.forEach(function (r, i) { if (r.items) texts.push({ '單據編號': made[i].id, '引擎': '財政部匯入', '段落': 1, '原始文字': '品名：' + r.items, '擷取時間': now }); });
+    if (texts.length) appendObjects_(SHEETS.DOC_TEXT, texts);
     log_(s.username, '匯入進項發票', str_(p.fileName) + '：新增 ' + made.length + ' 張，重複 ' + dups.length + ' 張，略過 ' + parsed.skipped.length + ' 列');
     return { added: made.length, duplicates: dups, skipped: parsed.skipped };
   });
@@ -512,7 +516,7 @@ function postDocVoucher_(p, s) {
     lines = docToLines_({ total: d.total, tax: d.tax, sellerName: d.sellerName, deductible: deductible }, expense, pay, enabled);
     if (!type) type = TRANSFER_PAY_CODES.indexOf(pay) >= 0 ? '轉帳' : '支出';
   }
-  var r = saveVoucherCore_({ date: str_(p.date) || d.date, type: type || '支出', memo: str_(p.memo).slice(0, 100) || docMemo_(d, d.source === '拍照上傳' ? itemNameOf_(loadDocText_(d.id)) : ''), lines: lines, source: '單據' }, s);
+  var r = saveVoucherCore_({ date: str_(p.date) || d.date, type: type || '支出', memo: str_(p.memo).slice(0, 100) || docMemo_(d, itemNameOf_(loadDocText_(d.id))), lines: lines, source: '單據' }, s);
 
   var now = nowText_();
   if (deductible !== d.deductible) d.src.deductible = '人工';
