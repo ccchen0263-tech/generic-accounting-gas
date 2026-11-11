@@ -159,6 +159,21 @@ test('電子發票證明聯（A4 版面，雲端硬碟 OCR 實際輸出，名稱
   }
 });
 
+test('金額與賣方的邊界情況（Codex 審查）', () => {
+  const app = loadApp();
+  assert.equal(plain(app.parseReceiptText_('合計 新臺幣 3,200 元', {})).total, 3200);
+  assert.equal(plain(app.parseReceiptText_('總計 新台幣 1,050 元', {})).total, 1050);
+  const r = plain(app.parseReceiptText_('銷售額 1,000\n營業稅 5% 50\n總計 1,050', {}));
+  assert.deepEqual([r.net, r.tax, r.total], [1000, 50, 1050]);
+  assert.equal(plain(app.parseReceiptText_('賣方：大成 生鮮食品有限公司\n總計 100', {})).sellerName, '大成 生鮮食品有限公司');
+  const b = plain(app.parseReceiptText_('買受人：公版餐飲有限公司 統一編號 ' + OWN + '\n大成生鮮食品有限公司\n統一編號 ' + SELLER + '\n總計 100', { taxId: OWN }));
+  assert.equal(b.sellerTaxId, SELLER);
+  assert.equal(b.buyerTaxId, OWN);
+  const c = plain(app.parseReceiptText_('買受人：公版餐飲有限公司 統一編號 ' + OWN + '\n大成生鮮食品有限公司\n統一編號 ' + SELLER + '\n總計 100', {}));
+  assert.equal(c.sellerTaxId, SELLER);
+  assert.equal(c.buyerTaxId, OWN);
+});
+
 test('財政部進項發票檔：民國日期、引號金額、作廢略過、載具格式', () => {
   const app = loadApp();
   const r = plain(app.parseInvoiceCsv_(CSV));

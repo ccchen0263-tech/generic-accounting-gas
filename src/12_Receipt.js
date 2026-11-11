@@ -34,7 +34,7 @@ function moneyOf_(s) {
 }
 
 /** 找出「關鍵字」後面最近的金額（同一行或下一行） */
-var AMOUNT_STOP = /統一編號|統編|地\s*址|電\s*話|賣\s*方|買\s*(受人|方)|營業人|中文大寫|新台幣|新臺幣/;
+var AMOUNT_STOP = /統一編號|統編|地\s*址|電\s*話|賣\s*方|買\s*(受人|方)|營業人|中文大寫/;
 /** 電子發票證明聯的課稅別勾選欄「應稅 √ 零稅率 免稅」不是金額說明，先拿掉，避免整行被當成免稅排除 */
 var TAX_TYPE_BOX = /應稅\s*[√✓VvＶ]?\s*零稅率\s*[√✓VvＶ]?\s*免稅\s*[√✓VvＶ]?/g;
 function amountAfter_(lines, keywords, exclude) {
@@ -47,7 +47,7 @@ function amountAfter_(lines, keywords, exclude) {
     if (!hit || (ex && ex.test(line))) continue;
     // 只看關鍵字後面、下一個標籤（統編、地址、賣方…）之前的那一段，取第一個數字：
     // 電子發票證明聯常把「總計 2,151 統一編號… 地址…18樓」排在同一行，取最後一個數字會讀成 18
-    var rest = line.slice(hit.index + hit[0].length).split(AMOUNT_STOP)[0];
+    var rest = line.slice(hit.index + hit[0].length).split(AMOUNT_STOP)[0].replace(/\d+(\.\d+)?\s*[%％]/g, ' '); // 稅率 5% 不是金額
     var nums = rest.match(/\d[\d,]*(\.\d+)?/g);
     if (!nums && i + 1 < lines.length) nums = lines[i + 1].match(/^\s*(NT\$|\$)?\s*(\d[\d,]*(\.\d+)?)\s*元?\s*$/) ? [lines[i + 1]] : null;
     if (!nums) continue;
@@ -95,7 +95,9 @@ function parseReceiptText_(text, own) {
   while ((tm = tagRe.exec(flat))) {
     if (!isValidTaxId_(tm[2])) continue;
     var b = lastAt(BUYER, tm.index), sl = lastAt(SELLER, tm.index);
-    if (b < 0 && sl < 0) continue;
+    var near = function (at) { return at >= 0 && (flat.slice(at, tm.index).match(/\n/g) || []).length <= 1; }; // 標籤同一行或下一行才算
+    var who = b > sl ? b : sl;
+    if (!near(who)) continue;
     tagged[tm[2]] = b > sl ? 'buyer' : 'seller';
   }
   ids.forEach(function (id) {
@@ -116,8 +118,9 @@ function parseReceiptText_(text, own) {
   // 賣方名稱：含「公司、商行、企業社…」且不是本公司的第一行
   var ownName = str_(own.name);
   // 先找明確標示「賣方：XXX」的
-  var sm = /(賣\s*方|營業人名稱)\s*[:：]\s*([^\s:：]{2,40})/.exec(flat);
-  var nameLine = sm && (!ownName || sm[2].indexOf(ownName) < 0) ? sm[2] : '';
+  var sm = /(賣\s*方|營業人名稱)\s*[:：]\s*([^\n]{2,80})/.exec(flat);
+  var labeled = sm ? sm[2].split(/統一編號|統編|地\s*址|電\s*話|總計|合計|銷售額|營業稅|發票|買\s*(?:受人|方)|[:：]/)[0].trim() : '';
+  var nameLine = labeled.length >= 2 && (!ownName || labeled.indexOf(ownName) < 0) ? labeled : '';
   if (!nameLine) nameLine = lines.filter(function (l) {
     if (!/(股份有限公司|有限公司|公司|商行|企業社|商號|工作室|實業|行號|門市|分公司)/.test(l)) return false;
     if (ownName && l.indexOf(ownName) >= 0) return false;
