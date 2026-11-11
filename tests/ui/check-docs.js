@@ -53,6 +53,17 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     await page.waitForTimeout(300);
     const msg2 = await page.textContent('#upProg');
     if (!/請按「匯入財政部進項發票檔」/.test(msg2) || /找不到/.test(msg2)) fail('CSV 選到照片按鈕時提醒不對：' + msg2);
+    // 財政部檔是 UTF-16（Unicode 文字）也要讀得懂；副檔名 .csv 但內容是 Excel 要明確提醒
+    const u16 = '\uFEFF發票狀態\t發票號碼\t發票日期\t賣方統一編號\t賣方名稱\t買方統一編號\t銷售額合計\t營業稅\t總計\r\n已確認\tKL99887766\t115/02/03\t22099131\t測試商行\t53212539\t100\t5\t105\r\n';
+    fs.writeFileSync(path.join(tmp, 'utf16.csv'), Buffer.from(u16, 'utf16le'));
+    await page.setInputFiles('#invFile', path.join(tmp, 'utf16.csv'));
+    await idle(page);
+    await page.waitForTimeout(300);
+    if (!/匯入 1 張發票/.test(await page.textContent('#upProg'))) fail('UTF-16 的 CSV 讀不懂：' + await page.textContent('#upProg'));
+    fs.writeFileSync(path.join(tmp, 'fake.csv'), Buffer.from([0x50, 0x4B, 0x03, 0x04, 0, 0, 0, 0]));
+    await page.setInputFiles('#invFile', path.join(tmp, 'fake.csv'));
+    await page.waitForTimeout(400);
+    if (!/其實是 Excel/.test(await page.textContent('#upProg'))) fail('副檔名 csv 的 Excel 沒有提醒');
     // 1. 校正畫面
     await page.locator('#docList .doc-row', { hasText: '大成生鮮' }).locator('.doc-open').click();
     await page.waitForSelector('#modal:not([hidden]) .review');
@@ -84,7 +95,7 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     await page.waitForSelector('#modal', { state: 'hidden' });
     await idle(page);
     const left = await page.$$eval('#docList .doc-row', (x) => x.length);
-    if (left !== 4) fail('入帳後待處理應剩 4 張，實際 ' + left);
+    if (left !== 5) fail('入帳後待處理應剩 5 張（含剛匯入的 UTF-16 發票），實際 ' + left);
 
     // 2. 批次確認
     for (const who of ['中華電信', '台灣電力']) await page.locator('#docList .doc-row', { hasText: who }).locator('[data-pick]').check();
