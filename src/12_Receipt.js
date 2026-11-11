@@ -34,6 +34,9 @@ function moneyOf_(s) {
 }
 
 /** 找出「關鍵字」後面最近的金額（同一行或下一行） */
+var AMOUNT_STOP = /統一編號|統編|地\s*址|電\s*話|賣\s*方|買\s*(受人|方)|營業人|中文大寫|新台幣|新臺幣/;
+/** 電子發票證明聯的課稅別勾選欄「應稅 √ 零稅率 免稅」不是金額說明，先拿掉，避免整行被當成免稅排除 */
+var TAX_TYPE_BOX = /應稅\s*[√✓VvＶ]?\s*零稅率\s*[√✓VvＶ]?\s*免稅\s*[√✓VvＶ]?/g;
 function amountAfter_(lines, keywords, exclude) {
   var re = new RegExp('(' + keywords.join('|') + ')');
   var ex = exclude ? new RegExp('(' + exclude.join('|') + ')') : null;
@@ -42,11 +45,13 @@ function amountAfter_(lines, keywords, exclude) {
     var line = lines[i];
     var hit = re.exec(line);
     if (!hit || (ex && ex.test(line))) continue;
-    var rest = line.slice(hit.index + hit[0].length);
+    // 只看關鍵字後面、下一個標籤（統編、地址、賣方…）之前的那一段，取第一個數字：
+    // 電子發票證明聯常把「總計 2,151 統一編號… 地址…18樓」排在同一行，取最後一個數字會讀成 18
+    var rest = line.slice(hit.index + hit[0].length).split(AMOUNT_STOP)[0];
     var nums = rest.match(/\d[\d,]*(\.\d+)?/g);
     if (!nums && i + 1 < lines.length) nums = lines[i + 1].match(/^\s*(NT\$|\$)?\s*(\d[\d,]*(\.\d+)?)\s*元?\s*$/) ? [lines[i + 1]] : null;
     if (!nums) continue;
-    var v = moneyOf_(nums[nums.length - 1]);
+    var v = moneyOf_(nums[0]);
     if (!isNaN(v) && v > 0 && v < 100000000 && (isNaN(best) || v > best)) best = v;
   }
   return best;
@@ -59,8 +64,9 @@ function amountAfter_(lines, keywords, exclude) {
 function parseReceiptText_(text, own) {
   own = own || {};
   var raw = String(text || '');
-  var lines = raw.split(/\r?\n/).map(function (l) { return l.replace(/　/g, ' ').trim(); }).filter(String);
+  var lines = raw.split(/\r?\n/).map(function (l) { return l.replace(/　/g, ' ').replace(TAX_TYPE_BOX, ' ').replace(/\s+/g, ' ').trim(); }).filter(String);
   var flat = lines.join('\n');
+  var BUYER = /買\s*(受人|方)/g, SELLER = /賣\s*方|營業人名稱/g;
   var out = { kind: '其他', invoiceNo: '', date: '', sellerName: '', sellerTaxId: '', buyerTaxId: '', net: 0, tax: 0, total: 0, src: {} };
 
   // 發票號碼：兩個英文字母 + 8 碼數字
@@ -79,12 +85,27 @@ function parseReceiptText_(text, own) {
     if (id === out.invoiceNo.slice(2)) return;
     if (isValidTaxId_(id) && ids.indexOf(id) < 0) ids.push(id);
   });
+  // 有「統一編號：」標籤的，看它前面最近的是「買方」還是「賣方」
+  var lastAt = function (re, end) {
+    var at = -1, m; re.lastIndex = 0;
+    while ((m = re.exec(flat)) && m.index < end) at = m.index;
+    return at;
+  };
+  var tagRe = /(統一編號|統編)\s*[:：]?\s*(\d{8})(?!\d)/g, tm, tagged = {};
+  while ((tm = tagRe.exec(flat))) {
+    if (!isValidTaxId_(tm[2])) continue;
+    var b = lastAt(BUYER, tm.index), sl = lastAt(SELLER, tm.index);
+    if (b < 0 && sl < 0) continue;
+    tagged[tm[2]] = b > sl ? 'buyer' : 'seller';
+  }
   ids.forEach(function (id) {
     if (own.taxId && id === own.taxId) out.buyerTaxId = id;
-    else if (!out.sellerTaxId) out.sellerTaxId = id;
+    else if (tagged[id] === 'buyer') { if (!out.buyerTaxId) out.buyerTaxId = id; }
+    else if (tagged[id] === 'seller') { if (!out.sellerTaxId || tagged[out.sellerTaxId] !== 'seller') out.sellerTaxId = id; }
+    else if (!out.sellerTaxId && tagged[id] !== 'buyer') out.sellerTaxId = id;
   });
-  if (!own.taxId) {
-    var buyerLine = lines.filter(function (l) { return /買(受人|方)/.test(l); })[0];
+  if (!own.taxId && !out.buyerTaxId) {
+    var buyerLine = lines.filter(function (l) { return /買\s*(受人|方)/.test(l); })[0];
     var bm = buyerLine && /(\d{8})/.exec(buyerLine);
     if (bm && isValidTaxId_(bm[1])) {
       out.buyerTaxId = bm[1];
@@ -94,10 +115,13 @@ function parseReceiptText_(text, own) {
 
   // 賣方名稱：含「公司、商行、企業社…」且不是本公司的第一行
   var ownName = str_(own.name);
-  var nameLine = lines.filter(function (l) {
+  // 先找明確標示「賣方：XXX」的
+  var sm = /(賣\s*方|營業人名稱)\s*[:：]\s*([^\s:：]{2,40})/.exec(flat);
+  var nameLine = sm && (!ownName || sm[2].indexOf(ownName) < 0) ? sm[2] : '';
+  if (!nameLine) nameLine = lines.filter(function (l) {
     if (!/(股份有限公司|有限公司|公司|商行|企業社|商號|工作室|實業|行號|門市|分公司)/.test(l)) return false;
     if (ownName && l.indexOf(ownName) >= 0) return false;
-    return !/(統一發票|電子發票|買受人|地址|電話)/.test(l);
+    return !/(統一發票|電子發票|買\s*(受人|方)|發票號碼|地\s*址|電話)/.test(l);
   })[0];
   // 找不到公司名稱時：短短一行、以「行、店、社、坊、館、廠」結尾的店名（收據常見）
   if (!nameLine) nameLine = lines.filter(function (l) {
