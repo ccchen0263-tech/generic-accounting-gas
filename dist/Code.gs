@@ -1301,7 +1301,11 @@ function parseInvoiceCsv_(text) {
   }
   if (headIdx < 0) {
     var first = (lines[0] || '').replace(/\s+/g, ' ').trim();
-    var binary = /[\u0000-\u0008\uFFFD]/.test(first) || /^(\x89PNG|%PDF|PK|ÿØÿ)/.test(first);
+    var binary = /[\u0000-\u0008]/.test(first) || /^(\x89PNG|%PDF|PK|ÿØÿ)/.test(first);
+    // 中文變亂碼：Excel 用錯編碼打開財政部檔再存檔，中文會變成一堆「?」或怪字，而且救不回來
+    var garbled = !binary && ((first.match(/\?/g) || []).length >= 3 || (first.match(/\uFFFD/g) || []).length >= 2);
+    if (garbled) throw new Error('這個檔案的中文已經變成亂碼，通常是先用 Excel 打開、再存檔造成的（Excel 會用錯的編碼讀財政部的檔案，存檔後就救不回來）。' +
+      '請回財政部網站重新下載一次，下載後不要打開，直接按「匯入財政部進項發票檔」選它。');
     throw new Error(binary
       ? '這不是文字格式的 CSV 檔（看起來是照片、PDF 或 Excel）。照片和 PDF 請按「選擇照片或 PDF」；財政部發票請下載 CSV 格式。'
       : '看不懂這個檔案：找不到「發票號碼」欄位。檔案第一列是：「' + first.slice(0, 120) + (first.length > 120 ? '…' : '') + '」。請把這段文字或檔案傳給系統管理者確認格式。');

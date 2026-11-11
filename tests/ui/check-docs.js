@@ -60,6 +60,19 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     await idle(page);
     await page.waitForTimeout(300);
     if (!/匯入 1 張發票/.test(await page.textContent('#upProg'))) fail('UTF-16 的 CSV 讀不懂：' + await page.textContent('#upProg'));
+    // UTF-8 檔裡夾了一個壞位元組（UTF-8 嚴格模式會整份失敗）：仍要讀成 UTF-8，不能變成 Big5 亂碼
+    const u8ok = Buffer.from('發票號碼,發票日期,賣方統一編號,賣方名稱,銷售額合計,營業稅,總計\r\nKL99887700,115/02/04,22099131,測試商行,200,10,210\r\n', 'utf8');
+    fs.writeFileSync(path.join(tmp, 'utf8bad.csv'), Buffer.concat([u8ok, Buffer.from([0xff, 0x0d, 0x0a])]));
+    await page.setInputFiles('#invFile', path.join(tmp, 'utf8bad.csv'));
+    await idle(page);
+    await page.waitForTimeout(300);
+    if (!/匯入 1 張發票/.test(await page.textContent('#upProg'))) fail('夾壞位元組的 UTF-8 CSV 讀不懂：' + await page.textContent('#upProg'));
+    // Big5 檔仍要讀得懂
+    fs.writeFileSync(path.join(tmp, 'big5.csv'), Buffer.from('b56fb2bcb8b9bd582cb56fb2bca4e9b4c12cbde6a4e8b2cea440bd73b8b92cbde6a4e8a657bad92cbe50b0e2c342a658ad702cc0e7b77eb57c2cc160ad700d0a4b4c39393838373730312c3131352f30322f30352c32323039393133312cb4fab8d5b0d3a6e62c3330302c31352c3331350d0a', 'hex'));
+    await page.setInputFiles('#invFile', path.join(tmp, 'big5.csv'));
+    await idle(page);
+    await page.waitForTimeout(300);
+    if (!/匯入 1 張發票/.test(await page.textContent('#upProg'))) fail('Big5 的 CSV 讀不懂：' + await page.textContent('#upProg'));
     fs.writeFileSync(path.join(tmp, 'fake.csv'), Buffer.from([0x50, 0x4B, 0x03, 0x04, 0, 0, 0, 0]));
     await page.setInputFiles('#invFile', path.join(tmp, 'fake.csv'));
     await page.waitForTimeout(400);
@@ -95,7 +108,7 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     await page.waitForSelector('#modal', { state: 'hidden' });
     await idle(page);
     const left = await page.$$eval('#docList .doc-row', (x) => x.length);
-    if (left !== 5) fail('入帳後待處理應剩 5 張（含剛匯入的 UTF-16 發票），實際 ' + left);
+    if (left !== 7) fail('入帳後待處理應剩 7 張（含剛匯入的 UTF-16、UTF-8、Big5 發票），實際 ' + left);
 
     // 2. 批次確認
     for (const who of ['中華電信', '台灣電力']) await page.locator('#docList .doc-row', { hasText: who }).locator('[data-pick]').check();
