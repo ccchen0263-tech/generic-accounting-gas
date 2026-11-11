@@ -179,7 +179,11 @@ function ocrBlob_(blob) {
   if (typeof Drive === 'undefined' || !Drive.Files) return { text: '', error: '尚未啟用文字辨識（Apps Script「服務」需加入 Drive API），請手動輸入內容' };
   var tmp = null;
   try {
-    tmp = Drive.Files.create({ name: 'OCR暫存_' + blob.getName(), mimeType: 'application/vnd.google-apps.document' }, blob, { ocrLanguage: 'zh-TW' });
+    var meta = { name: 'OCR暫存_' + blob.getName(), mimeType: 'application/vnd.google-apps.document' };
+    // Drive API v3 的語言提示只接受 ISO 639-1 兩碼（zh），寫 zh-TW 會被拒絕「Invalid Value」；
+    // 萬一還是被拒，就不帶提示讓 Google 自動判斷
+    try { tmp = Drive.Files.create(meta, blob, { ocrLanguage: 'zh' }); }
+    catch (e1) { tmp = Drive.Files.create(meta, blob); }
     return { text: DocumentApp.openById(tmp.id).getBody().getText(), error: '' };
   } catch (e) {
     return { text: '', error: '文字辨識失敗（' + e.message + '），請手動輸入內容' };
