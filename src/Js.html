@@ -80,7 +80,10 @@
     var args = Array.prototype.slice.call(arguments, 1);
     return new Promise(function (resolve, reject) {
       var runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(function (e) {
-        reject(new Error(e && e.message ? e.message : '連線失敗，請稍後再試'));
+        var err = new Error(e && e.message ? e.message : '連線失敗，請稍後再試' + (e ? '（' + (e.name || String(e)).slice(0, 80) + '）' : ''));
+        err.transport = !(e && e.message);
+        try { console.error('google.script.run 失敗', fn, e); } catch (x) { /* 忽略 */ }
+        reject(err);
       });
       runner[fn].apply(runner, args);
     });
@@ -638,14 +641,39 @@
     });
   }
   /** 財政部下載檔可能是 UTF-8 或 Big5 */
+  /**
+   * 讀財政部下載檔：先看檔頭判斷真正格式（副檔名可能是 .csv 但內容是 Excel），
+   * 再依編碼解碼：UTF-16（Unicode 文字）、UTF-8、Big5
+   */
   function readTextFile(file) {
     return new Promise(function (resolve, reject) {
       var r = new FileReader();
       r.onload = function () {
-        var buf = r.result, text;
-        try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-        catch (e) { try { text = new TextDecoder('big5').decode(buf); } catch (e2) { reject(new Error('檔案編碼無法辨識')); return; } }
-        resolve(text);
+        var u8 = new Uint8Array(r.result);
+        var at = function (sig) { return sig.every(function (b, i) { return u8[i] === b; }); };
+        if (at([0x50, 0x4B, 0x03, 0x04])) return reject(new Error('「' + file.name + '」的內容其實是 Excel（.xlsx）。請用 Excel 打開後「另存新檔」→ 存檔類型選「CSV UTF-8（逗號分隔）」，再匯入。'));
+        if (at([0xD0, 0xCF, 0x11, 0xE0])) return reject(new Error('「' + file.name + '」的內容其實是舊版 Excel（.xls）。請用 Excel 打開後「另存新檔」→ 存檔類型選「CSV UTF-8（逗號分隔）」，再匯入。'));
+        if (at([0x25, 0x50, 0x44, 0x46])) return reject(new Error('「' + file.name + '」是 PDF，請改按「選擇照片或 PDF」上傳。'));
+        if (at([0xFF, 0xD8, 0xFF]) || at([0x89, 0x50, 0x4E, 0x47])) return reject(new Error('「' + file.name + '」是照片，請改按「選擇照片或 PDF」上傳。'));
+        var enc = '';
+        if (at([0xFF, 0xFE])) enc = 'utf-16le';
+        else if (at([0xFE, 0xFF])) enc = 'utf-16be';
+        else {
+          // 沒有 BOM 的 UTF-16：前面幾百個位元組裡，奇數或偶數位置大量是 0
+          var n = Math.min(u8.length, 400), oddZero = 0, evenZero = 0;
+          for (var i = 0; i < n; i++) { if (u8[i] === 0) { if (i % 2) oddZero++; else evenZero++; } }
+          if (oddZero > n / 6) enc = 'utf-16le';
+          else if (evenZero > n / 6) enc = 'utf-16be';
+        }
+        var text;
+        try {
+          if (enc) text = new TextDecoder(enc).decode(u8);
+          else {
+            try { text = new TextDecoder('utf-8', { fatal: true }).decode(u8); }
+            catch (e) { text = new TextDecoder('big5').decode(u8); }
+          }
+        } catch (e2) { return reject(new Error('檔案編碼無法辨識')); }
+        resolve(text.replace(/^\uFEFF/, ''));
       };
       r.onerror = function () { reject(new Error('檔案讀取失敗')); };
       r.readAsArrayBuffer(file);
@@ -731,8 +759,17 @@
           return;
         }
         prog.textContent = '上傳並辨識第 ' + (i + 1) + ' / ' + list.length + ' 張（每張約 5～15 秒）…';
-        readFileForUpload(list[i]).then(function (f) { return call('uploadDoc', f); })
-          .then(function (r) { done.push(r); }, function (e) { failed.push(e.message); })
+        var size = '';
+        readFileForUpload(list[i]).then(function (f) {
+          size = Math.round(f.data.length * 0.75 / 1024) + 'KB';
+          // 傳輸失敗（還沒到伺服器）自動重試一次
+          return call('uploadDoc', f).catch(function (e) {
+            if (!e.transport) throw e;
+            prog.textContent = '第 ' + (i + 1) + ' 張連線中斷，重試中…';
+            return new Promise(function (ok) { setTimeout(ok, 2000); }).then(function () { return call('uploadDoc', f); });
+          });
+        })
+          .then(function (r) { done.push(r); }, function (e) { failed.push(list[i].name + (size ? '（' + size + '）' : '') + '：' + e.message); })
           .then(function () { step(i + 1); });
       };
       step(0);
