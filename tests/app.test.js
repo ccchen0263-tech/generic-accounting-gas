@@ -414,6 +414,15 @@ test('忘記密碼被鎖住後，重設 admin 密碼即可馬上登入', () => {
   assert.equal(app.login('admin', pw, 'mybrowser').ok, true);
 });
 
+test('從編輯器執行 setup／重設密碼不跳 alert 對話框（會讓編輯器卡住轉圈）；改用右下角提示', () => {
+  const { app } = setupApp();
+  app.setup();
+  app.resetAdminPassword();
+  app.writeReportsThisMonth && app.writeReportsThisMonth();
+  assert.deepEqual(app.__ui.alerts, [], '不可使用 alert');
+  assert.ok(app.__ui.toasts.some((m) => /臨時密碼/.test(m)), '重設密碼要在試算表提示');
+});
+
 // ───────────── 第 0.2 版：多公司、集團報表、傳票範本 ─────────────
 
 function groupBooks() {
