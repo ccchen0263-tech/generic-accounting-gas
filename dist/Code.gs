@@ -3496,7 +3496,7 @@ function setup() {
     log_('system', '初始設定', '更新工作表與科目參考庫');
   }
   Logger.log(msg);
-  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { /* 從編輯器執行時沒有對話框，請看執行紀錄 */ }
+  notify_(msg);
 }
 
 function ensureSheet_(ss, name) {
@@ -3524,7 +3524,7 @@ function writeReportsThisMonth() {
   var today = todayText_();
   writeReportSheets_(monthStart_(today.slice(0, 7)), today, today);
   log_('system', '寫入報表分頁', '選單執行');
-  try { SpreadsheetApp.getUi().alert('已更新「報表_」三個分頁'); } catch (e) { /* 編輯器執行 */ }
+  notify_('已更新「報表_」三個分頁');
 }
 
 /** 忘記管理者密碼時使用：重設 admin 並在執行紀錄顯示新臨時密碼 */
@@ -3543,5 +3543,13 @@ function resetAdminPassword() {
   }
   log_('system', '重設 admin 密碼', '');
   Logger.log(msg);
-  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { /* 編輯器執行 */ }
+  notify_(msg);
+}
+
+/**
+ * 管理函式執行完的通知：寫進執行記錄，並在試算表右下角跳出提示（不會擋住程式）。
+ * 不用 alert 對話框：從 Apps Script 編輯器執行時，alert 會在試算表分頁等人按「確定」，編輯器就一直轉圈。
+ */
+function notify_(msg) {
+  try { var ss = SpreadsheetApp.getActiveSpreadsheet(); if (ss && ss.toast) ss.toast(msg, APP.name, -1); } catch (e) { /* 沒有開著的試算表時只看執行記錄 */ }
 }
