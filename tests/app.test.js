@@ -592,6 +592,26 @@ test('傳票範本：醫美診所的療程收入、藥品進貨不拆營業稅�
   assert.ok(!bio.includes('m-treat-cash') && !bio.includes('f-raw'));
 });
 
+test('Codex P2：免稅公司（診所）的通用範本不拆進項稅額，含稅金額整筆記費用；銷項稅額照拆', () => {
+  const { app, call } = setupApp();
+  call('saveSettings', { companyName: '公版醫美診所', industries: ['醫美診所'], vatType: '免稅', fyStartMonth: 1, openingDate: '2026-01-01' });
+  call('addByIndustry', { industries: ['醫美診所'] });
+  const tpls = call('bootstrap').templates;
+  const rent = tpls.find((t) => t.id === 'g-rent');
+  assert.equal(rent.amountMode, 'single');
+  assert.match(rent.name, /免稅/);
+  assert.deepEqual(plain(app.applyTemplate_(rent, 1050)), [{ code: '6121', debit: 1050, credit: 0 }, { code: '1113', debit: 0, credit: 1050 }]);
+  tpls.forEach((t) => assert.ok(!t.lines.some((l) => l.code === '1191' && l.side === 'D'), t.id + ' 不可借記進項稅額'));
+  assert.deepEqual(plain(call('voucherTemplates')).find((t) => t.id === 'g-util').lines.map((l) => l.code), ['6191', '1113']);
+  const product = tpls.find((t) => t.id === 'm-product');
+  assert.ok(product.lines.some((l) => l.code === '2161'), '兼賣保養品仍拆銷項稅額');
+  const v = call('saveVoucher', { date: '2026-01-20', type: rent.type, memo: rent.memo, lines: app.applyTemplate_(rent, 1050) });
+  assert.ok(v.no);
+  // 一般稅額公司不受影響
+  call('saveSettings', { companyName: '公版醫美診所', industries: ['醫美診所'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' });
+  assert.ok(call('bootstrap').templates.find((t) => t.id === 'g-rent').lines.some((l) => l.code === '1191'));
+});
+
 test('全新部署：以試算表檔名當第一家公司名稱', () => {
   const app = loadApp();
   app.__ss.name = '公版餐飲有限公司｜集團會計系統（主檔）';

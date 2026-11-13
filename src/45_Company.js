@@ -259,5 +259,6 @@ HANDLERS.consolidated = function (p, s) {
 // ───────────── 傳票範本 ─────────────
 
 HANDLERS.voucherTemplates = function () {
-  return templatesFor_(loadSettings_().industries, loadAccounts_());
+  var st = loadSettings_();
+  return templatesFor_(st.industries, loadAccounts_(), st.vatType);
 };

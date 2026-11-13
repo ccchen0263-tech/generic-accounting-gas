@@ -70,7 +70,7 @@ HANDLERS.bootstrap = function (p, s) {
     allowed: allowed,
     settings: settings,
     accounts: accounts,
-    templates: templatesFor_(settings.industries, accounts),
+    templates: templatesFor_(settings.industries, accounts, settings.vatType),
     lockedPeriods: lockedPeriodsMap_(),
     blocks: Object.keys(BLOCKS).map(function (b) { return { name: b, category: BLOCKS[b].category, normal: BLOCKS[b].normal, statement: BLOCKS[b].statement }; }),
     industries: INDUSTRIES,

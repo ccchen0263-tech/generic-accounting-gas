@@ -1537,21 +1537,37 @@ var VOUCHER_TEMPLATES = [
   { id: 'g-account-fee', name: '記帳／會計師公費', industries: '通用', type: '支出', memo: '記帳費', lines: [['6321', 'D', 'total'], ['1113', 'C', 'total']] }
 ];
 
-/** 依公司產業與已啟用科目，挑出可用的範本 */
-function templatesFor_(industries, accounts) {
+/**
+ * 免稅公司（診所）的進項稅額不能扣抵：拿掉借方 1191 進項稅額，含稅金額整筆記入費用或成本。
+ * 銷項稅額（例如診所兼賣保養品）照舊拆出。
+ */
+function exemptLines_(lines) {
+  if (!lines.some(function (l) { return l[0] === '1191' && l[1] === 'D'; })) return lines;
+  return lines.filter(function (l) { return !(l[0] === '1191' && l[1] === 'D'); }).map(function (l) {
+    return l[1] === 'D' && l[2] === 'net' ? [l[0], l[1], 'total'] : l;
+  });
+}
+
+/** 依公司產業、已啟用科目與營業稅類型，挑出可用的範本 */
+function templatesFor_(industries, accounts, vatType) {
   var inds = (industries || []).concat(['通用']);
   var enabled = {};
   accounts.forEach(function (a) { if (a.enabled) enabled[a.code] = a; });
-  return VOUCHER_TEMPLATES.filter(function (t) {
-    var ok = t.industries.split(',').some(function (i) { return inds.indexOf(i) >= 0; });
-    return ok && t.lines.every(function (l) { return enabled[l[0]]; });
-  }).map(function (t) {
-    var split = t.lines.some(function (l) { return l[2] === 'net' || l[2] === 'tax'; });
-    var single = !split && t.lines.every(function (l) { return l[2] === 'total'; });
+  var exempt = vatType === '免稅';
+  return VOUCHER_TEMPLATES.map(function (t) {
+    return exempt ? { t: t, lines: exemptLines_(t.lines) } : { t: t, lines: t.lines };
+  }).filter(function (x) {
+    var ok = x.t.industries.split(',').some(function (i) { return inds.indexOf(i) >= 0; });
+    return ok && x.lines.every(function (l) { return enabled[l[0]]; });
+  }).map(function (x) {
+    var t = x.t;
+    var split = x.lines.some(function (l) { return l[2] === 'net' || l[2] === 'tax'; });
+    var single = !split && x.lines.every(function (l) { return l[2] === 'total'; });
+    var name = exempt && x.lines !== t.lines ? t.name.replace('（含稅）', '').replace('（含稅發票）', '') + '（免稅公司：稅額併入費用）' : t.name;
     return {
-      id: t.id, name: t.name, type: t.type, memo: t.memo, industries: t.industries,
+      id: t.id, name: name, type: t.type, memo: t.memo, industries: t.industries,
       amountMode: split ? 'tax' : single ? 'single' : 'manual',
-      lines: t.lines.map(function (l) { return { code: l[0], side: l[1], part: l[2] }; })
+      lines: x.lines.map(function (l) { return { code: l[0], side: l[1], part: l[2] }; })
     };
   });
 }
@@ -2048,7 +2064,7 @@ HANDLERS.bootstrap = function (p, s) {
     allowed: allowed,
     settings: settings,
     accounts: accounts,
-    templates: templatesFor_(settings.industries, accounts),
+    templates: templatesFor_(settings.industries, accounts, settings.vatType),
     lockedPeriods: lockedPeriodsMap_(),
     blocks: Object.keys(BLOCKS).map(function (b) { return { name: b, category: BLOCKS[b].category, normal: BLOCKS[b].normal, statement: BLOCKS[b].statement }; }),
     industries: INDUSTRIES,
@@ -2884,7 +2900,8 @@ HANDLERS.consolidated = function (p, s) {
 // ───────────── 傳票範本 ─────────────
 
 HANDLERS.voucherTemplates = function () {
-  return templatesFor_(loadSettings_().industries, loadAccounts_());
+  var st = loadSettings_();
+  return templatesFor_(st.industries, loadAccounts_(), st.vatType);
 };
 
 // ===== 47_Docs.js =====
