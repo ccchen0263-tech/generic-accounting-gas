@@ -108,6 +108,31 @@ test('食品公司：自製＋選品兩種產業同時帶入', () => {
   assert.ok(!codes.includes('1166'));
 });
 
+test('醫美診所：帶入療程收入、預收療程款、藥品耗材存貨與成本，不含餐飲與生技科目', () => {
+  const { call } = setupApp();
+  call('addByIndustry', { industries: ['醫美診所'] });
+  const codes = call('bootstrap').accounts.map((a) => a.code);
+  ['1142', '1161', '1167', '1431', '2183', '4112', '4171', '4172', '4173', '5121', '5181', '5182', '6392'].forEach((c) => assert.ok(codes.includes(c), c));
+  ['1166', '5171', '4121', '4181', '6382', '1162'].forEach((c) => assert.ok(!codes.includes(c), c));
+});
+
+test('生技公司：帶入授權與委託研究收入、研發與專利科目，不含醫美科目', () => {
+  const { call } = setupApp();
+  call('addByIndustry', { industries: ['生技公司'] });
+  const codes = call('bootstrap').accounts.map((a) => a.code);
+  ['1144', '1161', '1431', '1521', '1522', '2181', '4112', '4181', '4182', '5121', '6333', '6381', '6382', '6383', '6391'].forEach((c) => assert.ok(codes.includes(c), c));
+  ['4171', '5181', '2183', '1167', '5171'].forEach((c) => assert.ok(!codes.includes(c), c));
+});
+
+test('營業稅類型「免稅」：可儲存，新增公司可選；其他值仍擋下', () => {
+  const { call, app } = setupApp();
+  call('saveSettings', { companyName: '公版醫美診所', industries: ['醫美診所'], vatType: '免稅', fyStartMonth: 1, openingDate: '2026-01-01' });
+  assert.equal(call('getSettings').vatType, '免稅');
+  assert.deepEqual(plain(call('getSettings').industries), ['醫美診所']);
+  assert.throws(() => call('saveSettings', { companyName: 'A', industries: ['醫美診所'], vatType: '零稅率', fyStartMonth: 1, openingDate: '2026-01-01' }), /免稅/);
+  assert.ok(app.INDUSTRIES.includes('醫美診所') && app.INDUSTRIES.includes('生技公司'));
+});
+
 test('傳票：借貸不平衡、科目不存在、早於開帳日都會被擋', () => {
   const { call } = restaurantBooks();
   assert.throws(() => call('saveVoucher', { date: '2026-01-05', type: '支出', lines: [{ code: '6121', debit: 100 }, { code: '1113', credit: 90 }] }), /借貸不平衡/);
@@ -542,10 +567,29 @@ test('傳票範本：依產業顯示，含稅金額自動拆未稅與 5% 稅額'
   const refs = app.indexAccounts_(app.referenceAccountObjects_());
   app.VOUCHER_TEMPLATES.forEach((t) => {
     t.lines.forEach((l) => assert.ok(refs[l[0]], t.id + ' 科目 ' + l[0]));
-    const ap = app.applyTemplate_(app.templatesFor_(['餐飲', '食品製造', '食品買賣'], app.referenceAccountObjects_().map((a) => Object.assign(a, { enabled: true }))).find((x) => x.id === t.id) || { amountMode: 'manual', lines: [] }, 1050);
+    const all = app.templatesFor_(app.INDUSTRIES, app.referenceAccountObjects_().map((a) => Object.assign(a, { enabled: true })));
+    const found = all.find((x) => x.id === t.id);
+    assert.ok(found, t.id + ' 在對應產業應該看得到');
+    const ap = app.applyTemplate_(found, 1050);
     const dr = ap.reduce((s, x) => s + x.debit, 0), cr = ap.reduce((s, x) => s + x.credit, 0);
     assert.equal(dr, cr, t.id + ' 借貸不平衡');
   });
+});
+
+test('傳票範本：醫美診所的療程收入、藥品進貨不拆營業稅；生技公司有授權收入範本', () => {
+  const app = loadApp();
+  const accs = app.referenceAccountObjects_().map((a) => Object.assign(a, { enabled: true }));
+  const clinic = app.templatesFor_(['醫美診所'], accs);
+  const ids = clinic.map((t) => t.id);
+  ['m-treat-cash', 'm-treat-card', 'm-package', 'm-package-use', 'm-drug-credit', 'm-doctor', 'm-waste', 'r-card-pay', 'g-rent'].forEach((id) => assert.ok(ids.includes(id), id));
+  assert.ok(!ids.includes('r-cash') && !ids.includes('b-license'));
+  const treat = clinic.find((t) => t.id === 'm-treat-cash');
+  assert.equal(treat.amountMode, 'single');
+  assert.deepEqual(plain(app.applyTemplate_(treat, 12000)), [{ code: '1111', debit: 12000, credit: 0 }, { code: '4171', debit: 0, credit: 12000 }]);
+  assert.ok(clinic.filter((t) => /^m-(treat|package|drug)/.test(t.id)).every((t) => t.lines.every((l) => l.code !== '1191' && l.code !== '2161')), '診所醫療收入與藥品進貨不拆稅');
+  const bio = app.templatesFor_(['生技公司'], accs).map((t) => t.id);
+  ['b-license', 'b-research', 'b-rnd', 'b-cro', 'b-patent', 'f-goods', 'f-ec-pay', 'f-test'].forEach((id) => assert.ok(bio.includes(id), id));
+  assert.ok(!bio.includes('m-treat-cash') && !bio.includes('f-raw'));
 });
 
 test('全新部署：以試算表檔名當第一家公司名稱', () => {

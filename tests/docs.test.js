@@ -140,6 +140,22 @@ test('建議科目：依賣方名稱與產業', () => {
   assert.equal(app.suggestExpense_('阿明水電行 冷氣清洗', ['餐飲'], on), '6171');
   assert.equal(app.suggestExpense_('台灣電力股份有限公司', ['餐飲'], on), '6191');
   assert.equal(app.suggestExpense_('不知名商店', ['餐飲'], on), '6399');
+  // 醫美、生技專用科目：沒啟用就略過，不會亂建議
+  assert.equal(app.suggestExpense_('測試藥品股份有限公司 玻尿酸', ['餐飲'], on), '6399');
+  const clinic = { 5181: true, 6392: true, 6399: true, 6351: true };
+  assert.equal(app.suggestExpense_('測試藥品股份有限公司 玻尿酸', ['醫美診所'], clinic), '5181');
+  assert.equal(app.suggestExpense_('測試環保公司 醫療廢棄物清運', ['醫美診所'], clinic), '6392');
+  const bio = { 6381: true, 6383: true, 6399: true };
+  assert.equal(app.suggestExpense_('經濟部智慧財產局 專利年費', ['生技公司'], bio), '6383');
+  assert.equal(app.suggestExpense_('測試儀器有限公司 試劑', ['生技公司'], bio), '6381');
+});
+
+test('營業稅類型「免稅」的公司，進項稅額建議不可扣抵', () => {
+  const app = loadApp();
+  const inv = { kind: '電子發票', buyerTaxId: OWN, tax: 50, total: 1050 };
+  const h = app.deductibleHint_(inv, { taxId: OWN, vatType: '免稅' }, '5181');
+  assert.equal(h.suggest, '不可扣抵');
+  assert.match(h.reason, /不是一般稅額/);
 });
 
 test('電子發票證明聯（A4 版面，雲端硬碟 OCR 實際輸出，名稱與統編已換成測試資料）', () => {
