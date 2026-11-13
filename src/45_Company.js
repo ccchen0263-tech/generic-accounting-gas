@@ -101,7 +101,7 @@ HANDLERS.createCompany = function (p, s) {
       st.companyName = name;
       st.taxId = str_(p.taxId);
       st.industries = industries.length ? industries : ['通用'];
-      if (p.vatType) st.vatType = p.vatType;
+      if (VAT_TYPES.indexOf(p.vatType) >= 0) st.vatType = p.vatType;
       saveSettings_(st);
       if (p.addAccounts !== false) addReferenceAccounts_(referenceCodesFor_(st.industries), s);
       log_(s.username, '新增公司', id + ' ' + name);
@@ -271,5 +271,6 @@ HANDLERS.consolidated = function (p, s) {
 // ───────────── 傳票範本 ─────────────
 
 HANDLERS.voucherTemplates = function () {
-  return templatesFor_(loadSettings_().industries, loadAccounts_());
+  var st = loadSettings_();
+  return templatesFor_(st.industries, loadAccounts_(), st.vatType);
 };

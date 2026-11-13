@@ -1775,10 +1775,10 @@
         '<div class="row"><label class="grow">公司名稱<input id="sName" value="' + esc(s.companyName) + '"' + dis + '></label><label class="field">統一編號<input id="sTax" value="' + esc(s.taxId) + '" inputmode="numeric" maxlength="8"' + dis + '></label></div>' +
         '<div style="margin-top:14px"><div class="muted small">產業類別（可複選，影響建議科目）</div><div style="margin-top:6px">' +
         S.boot.industries.map(function (i) { return '<label class="check"><input type="checkbox" class="s-ind" value="' + i + '"' + (s.industries.indexOf(i) >= 0 ? ' checked' : '') + dis + '> ' + i + '</label>'; }).join('') + '</div></div>' +
-        '<div class="row" style="margin-top:14px"><label class="field">營業稅類型<select id="sVat"' + dis + '><option' + (s.vatType === '一般稅額' ? ' selected' : '') + '>一般稅額</option><option' + (s.vatType === '小規模' ? ' selected' : '') + '>小規模</option></select></label>' +
+        '<div class="row" style="margin-top:14px"><label class="field">營業稅類型<select id="sVat"' + dis + '><option' + (s.vatType === '一般稅額' ? ' selected' : '') + '>一般稅額</option><option' + (s.vatType === '小規模' ? ' selected' : '') + '>小規模</option><option' + (s.vatType === '免稅' ? ' selected' : '') + '>免稅</option></select></label>' +
         '<label class="field">會計年度起始月<select id="sFy"' + dis + '>' + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (m) { return '<option value="' + m + '"' + (s.fyStartMonth === m ? ' selected' : '') + '>' + m + ' 月</option>'; }).join('') + '</select></label>' +
         '<label class="field">開帳日<input type="date" id="sOpen" value="' + esc(s.openingDate) + '"' + dis + '></label></div>' +
-        '<div class="notice info" style="margin-top:14px">營業稅類型怎麼判斷：公司有開統一發票（含電子發票）、每兩個月申報 401 → 一般稅額；不開發票、國稅局每季寄稅單 → 小規模。不確定請問記帳士。<br>開帳日：開始用本系統記帳的第一天，期初餘額以這天為準；之後的傳票日期不能早於開帳日。</div>' +
+        '<div class="notice info" style="margin-top:14px">營業稅類型怎麼判斷：公司有開統一發票（含電子發票）、每兩個月申報 401 → 一般稅額；不開發票、國稅局每季寄稅單 → 小規模；診所的醫療收入免徵營業稅（進項稅額也不能扣抵）→ 免稅。不確定請問記帳士。<br>開帳日：開始用本系統記帳的第一天，期初餘額以這天為準；之後的傳票日期不能早於開帳日。</div>' +
         (edit ? '<p class="error-text" id="sErr" role="alert"></p><div class="modal-foot"><button class="btn primary" type="button" id="sSave">儲存設定</button></div>' : '<p class="muted">只有管理者可以修改公司設定。</p>') + '</div>';
       if (!edit) return;
       $('#sSave').onclick = function () {
@@ -1908,7 +1908,7 @@
         '<label style="margin-top:10px">統一編號（選填）<input id="cfTax" inputmode="numeric" maxlength="8"></label>' +
         '<div style="margin-top:12px"><div class="muted small">產業類別（決定建議科目與傳票範本，可複選）</div><div style="margin-top:6px">' +
         S.boot.industries.filter(function (i) { return i !== '通用'; }).map(function (i) { return '<label class="check"><input type="checkbox" class="cf-ind" value="' + i + '"> ' + i + '</label>'; }).join('') + '</div></div>' +
-        '<label style="margin-top:10px">營業稅類型<select id="cfVat"><option>一般稅額</option><option>小規模</option></select></label>' +
+        '<label style="margin-top:10px">營業稅類型<select id="cfVat"><option>一般稅額</option><option>小規模</option><option>免稅</option></select></label>' +
         '<p class="muted small">建立後請切換到這家公司，到「公司設定」填開帳日，再輸入期初餘額。</p>' +
         '<p class="error-text" id="cfErr" role="alert"></p><div class="modal-foot"><button class="btn" type="button" id="cfCancel">取消</button><button class="btn primary" type="button" id="cfSave">建立公司</button></div>', { narrow: true });
       $('#cfCancel', body).onclick = closeModal;

@@ -71,7 +71,7 @@ HANDLERS.bootstrap = function (p, s) {
     allowed: allowed,
     settings: settings,
     accounts: accounts,
-    templates: templatesFor_(settings.industries, accounts),
+    templates: templatesFor_(settings.industries, accounts, settings.vatType),
     lockedPeriods: lockedPeriodsMap_(),
     blocks: Object.keys(BLOCKS).map(function (b) { return { name: b, category: BLOCKS[b].category, normal: BLOCKS[b].normal, statement: BLOCKS[b].statement }; }),
     industries: INDUSTRIES,
@@ -598,7 +598,7 @@ HANDLERS.saveSettings = function (p, s) {
     };
     if (!st.companyName) errors.push('請填公司名稱');
     if (st.taxId && !isValidTaxId_(st.taxId)) errors.push('統一編號檢查碼不正確');
-    if (['一般稅額', '小規模'].indexOf(st.vatType) < 0) errors.push('營業稅類型需為「一般稅額」或「小規模」');
+    if (VAT_TYPES.indexOf(st.vatType) < 0) errors.push('營業稅類型需為「一般稅額」「小規模」或「免稅」');
     if (!(st.fyStartMonth >= 1 && st.fyStartMonth <= 12)) errors.push('會計年度起始月需為 1～12');
     if (st.openingDate && !isValidDate_(st.openingDate)) errors.push('開帳日格式需為 yyyy-MM-dd');
     if (!st.industries.length) st.industries = ['通用'];
