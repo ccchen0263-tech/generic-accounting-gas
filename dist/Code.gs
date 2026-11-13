@@ -1,0 +1,3661 @@
+/**
+ * 公版會計系統 v0.4.0（手動貼上版，由 tools/build-dist.js 產生，請勿直接修改）
+ * 原始碼：https://github.com/ccchen0263-tech/generic-accounting-gas
+ */
+// ===== 00_Config.js =====
+/**
+ * 公版會計系統 — 全域設定
+ * 所有工作表名稱、欄位、科目分類規則都集中在這裡。
+ */
+var APP = {
+  name: '公版會計系統',   // 預設名稱；各客戶可在「公司管理」改成自己的系統名稱（存在指令碼屬性 APP_NAME）
+  version: '0.4.0'
+};
+
+var SHEETS = {
+  SETTINGS: '公司設定',
+  REF: '科目參考庫',
+  ACCOUNTS: '會計科目',
+  OPENING: '期初餘額',
+  VOUCHERS: '傳票',
+  PERIODS: '期間',
+  STOCKTAKE: '月底盤點',
+  DOCS: '單據',
+  DOC_TEXT: '單據原文',
+  RPT_TB: '報表_試算表',
+  RPT_IS: '報表_損益表',
+  RPT_BS: '報表_資產負債表',
+  COMPANIES: '公司清單',
+  USERS: '_帳號',
+  ACCESS: '_公司權限',
+  LOG: '_操作紀錄'
+};
+
+/** 集團主檔上的工作表（帳號、公司清單、權限、操作紀錄）；其餘工作表在各公司自己的試算表 */
+var HUB_SHEETS = [SHEETS.COMPANIES, SHEETS.USERS, SHEETS.ACCESS, SHEETS.LOG];
+/** 每家公司試算表上的工作表 */
+var COMPANY_SHEETS = [SHEETS.SETTINGS, SHEETS.ACCOUNTS, SHEETS.OPENING, SHEETS.VOUCHERS, SHEETS.PERIODS, SHEETS.STOCKTAKE, SHEETS.DOCS, SHEETS.DOC_TEXT, SHEETS.REF];
+
+var HEADERS = {};
+HEADERS[SHEETS.SETTINGS] = ['項目', '值', '說明'];
+HEADERS[SHEETS.REF] = ['科目代碼', '科目名稱', '類別', '正常餘額', '報表區塊', '適用產業', '盤點對應成本科目', '說明'];
+HEADERS[SHEETS.ACCOUNTS] = ['科目代碼', '科目名稱', '類別', '正常餘額', '報表區塊', '適用產業', '盤點對應成本科目', '啟用', '來源', '說明'];
+HEADERS[SHEETS.OPENING] = ['科目代碼', '科目名稱', '借方', '貸方'];
+HEADERS[SHEETS.VOUCHERS] = ['傳票號碼', '日期', '類型', '行號', '科目代碼', '科目名稱', '借方', '貸方', '摘要', '往來對象', '來源', '狀態', '建立者', '建立時間', '修改者', '修改時間'];
+HEADERS[SHEETS.PERIODS] = ['期間', '狀態', '鎖定人', '鎖定時間'];
+HEADERS[SHEETS.STOCKTAKE] = ['期間', '存貨科目', '存貨名稱', '帳上金額', '盤點金額', '差額', '對應成本科目', '傳票號碼', '建立者', '建立時間'];
+HEADERS[SHEETS.DOCS] = ['單據編號', '來源', '種類', '狀態', '日期', '發票號碼', '賣方名稱', '賣方統編', '買方統編', '未稅金額', '稅額', '總金額', '欄位來源', '驗證等級', '驗證結果', '扣抵判定', '扣抵建議', '建議科目', '檔名', '檔案ID', '傳票號碼', '備註', '上傳者', '上傳時間', '確認者', '確認時間', '處理者', '處理時間', '版本', '解析版本'];
+/** OCR 原始文字另存（與解析結果分開）；一段最多 40,000 字，太長分多列 */
+HEADERS[SHEETS.DOC_TEXT] = ['單據編號', '引擎', '段落', '原始文字', '擷取時間'];
+HEADERS[SHEETS.USERS] = ['帳號', '姓名', '角色', '鹽', '密碼雜湊', '啟用', '建立時間', '最後登入'];
+HEADERS[SHEETS.LOG] = ['時間', '帳號', '動作', '內容', '公司'];
+HEADERS[SHEETS.COMPANIES] = ['公司代碼', '公司名稱', '試算表ID', '啟用', '建立時間'];
+HEADERS[SHEETS.ACCESS] = ['帳號', '公司代碼', '角色'];
+
+/** 這些欄位一律存成文字，避免代碼前置零或日期被試算表自動轉換 */
+var TEXT_COLUMNS = {};
+TEXT_COLUMNS[SHEETS.REF] = ['科目代碼', '盤點對應成本科目'];
+TEXT_COLUMNS[SHEETS.ACCOUNTS] = ['科目代碼', '盤點對應成本科目'];
+TEXT_COLUMNS[SHEETS.OPENING] = ['科目代碼'];
+TEXT_COLUMNS[SHEETS.VOUCHERS] = ['傳票號碼', '日期', '科目代碼', '建立時間', '修改時間'];
+TEXT_COLUMNS[SHEETS.PERIODS] = ['期間', '鎖定時間'];
+TEXT_COLUMNS[SHEETS.STOCKTAKE] = ['期間', '存貨科目', '對應成本科目', '傳票號碼', '建立時間'];
+TEXT_COLUMNS[SHEETS.DOCS] = ['單據編號', '日期', '發票號碼', '賣方統編', '買方統編', '建議科目', '檔案ID', '傳票號碼', '上傳時間', '確認時間', '處理時間'];
+TEXT_COLUMNS[SHEETS.DOC_TEXT] = ['單據編號', '擷取時間'];
+TEXT_COLUMNS[SHEETS.USERS] = ['帳號', '建立時間', '最後登入'];
+TEXT_COLUMNS[SHEETS.LOG] = ['時間'];
+TEXT_COLUMNS[SHEETS.COMPANIES] = ['公司代碼', '試算表ID', '建立時間'];
+TEXT_COLUMNS[SHEETS.ACCESS] = ['帳號', '公司代碼'];
+TEXT_COLUMNS[SHEETS.SETTINGS] = ['值'];
+
+/** 公司設定的預設值 */
+var DEFAULT_SETTINGS = [
+  ['公司名稱', '', '顯示在報表標題'],
+  ['統一編號', '', '8 碼'],
+  ['產業類別', '通用', '可多選，用「,」分隔：通用、餐飲、食品製造、食品買賣、醫美診所、生技公司'],
+  ['營業稅類型', '一般稅額', '一般稅額（5%，有開統一發票）、小規模（1%，國稅局查定）或 免稅（診所醫療收入免徵營業稅）'],
+  ['會計年度起始月', '1', '1～12，多數公司為 1'],
+  ['開帳日', '', '開始用本系統記帳的第一天，例如 2026-01-01；期初餘額以此日為準']
+];
+
+/** 可選的產業類別 */
+var INDUSTRIES = ['通用', '餐飲', '食品製造', '食品買賣', '醫美診所', '生技公司'];
+
+/** 營業稅類型：免稅＝醫院、診所的醫療勞務免徵營業稅（營業稅法第 8 條），進項稅額不能扣抵 */
+var VAT_TYPES = ['一般稅額', '小規模', '免稅'];
+
+/**
+ * 報表區塊：決定科目屬於哪個類別、出現在哪張報表、哪一邊為正。
+ * sign = 'D' 代表「借方 − 貸方」為正數；'C' 代表「貸方 − 借方」為正數。
+ */
+var BLOCKS = {
+  '流動資產':   { category: '資產', statement: 'BS', sign: 'D', normal: '借', order: 1,  digits: ['1'] },
+  '非流動資產': { category: '資產', statement: 'BS', sign: 'D', normal: '借', order: 2,  digits: ['1'] },
+  '流動負債':   { category: '負債', statement: 'BS', sign: 'C', normal: '貸', order: 3,  digits: ['2'] },
+  '非流動負債': { category: '負債', statement: 'BS', sign: 'C', normal: '貸', order: 4,  digits: ['2'] },
+  '權益':       { category: '權益', statement: 'BS', sign: 'C', normal: '貸', order: 5,  digits: ['3'] },
+  '營業收入':   { category: '收入', statement: 'IS', sign: 'C', normal: '貸', order: 6,  digits: ['4'] },
+  '營業成本':   { category: '成本', statement: 'IS', sign: 'D', normal: '借', order: 7,  digits: ['5'] },
+  '營業費用':   { category: '費用', statement: 'IS', sign: 'D', normal: '借', order: 8,  digits: ['6'] },
+  '營業外收入': { category: '營業外收入', statement: 'IS', sign: 'C', normal: '貸', order: 9,  digits: ['7'] },
+  '營業外支出': { category: '營業外支出', statement: 'IS', sign: 'D', normal: '借', order: 10, digits: ['7'] },
+  '所得稅費用': { category: '所得稅', statement: 'IS', sign: 'D', normal: '借', order: 11, digits: ['8'] }
+};
+
+var VOUCHER_TYPES = ['收入', '支出', '轉帳'];
+
+/** 在某家公司的角色 */
+var ROLES = ['管理者', '會計', '助理'];
+/** 集團層級身分：管理者＝所有公司的管理者，並可管理公司與帳號；成員＝依「公司權限」逐家設定 */
+var GROUP_ROLES = ['管理者', '成員'];
+
+/**
+ * 權限表：每個 API 動作允許哪些角色。
+ * 助理可以查看傳票與日記簿，並上傳單據（發票、收據照片）；入帳由會計或管理者確認。
+ */
+var PERMISSIONS = {
+  bootstrap:        ['管理者', '會計', '助理'],
+  changePassword:   ['管理者', '會計', '助理'],
+  listVouchers:     ['管理者', '會計', '助理'],
+  getVoucher:       ['管理者', '會計', '助理'],
+  journal:          ['管理者', '會計', '助理'],
+  saveVoucher:      ['管理者', '會計'],
+  voidVoucher:      ['管理者', '會計'],
+  ledger:           ['管理者', '會計'],
+  trialBalance:     ['管理者', '會計'],
+  incomeStatement:  ['管理者', '會計'],
+  balanceSheet:     ['管理者', '會計'],
+  dashboard:        ['管理者', '會計'],
+  writeReports:     ['管理者', '會計'],
+  getOpening:       ['管理者', '會計'],
+  saveOpening:      ['管理者', '會計'],
+  stocktakePreview: ['管理者', '會計'],
+  stocktakeSave:    ['管理者', '會計'],
+  stocktakeClear:   ['管理者', '會計'],
+  listPeriods:      ['管理者', '會計'],
+  lockPeriod:       ['管理者', '會計'],
+  unlockPeriod:     ['管理者'],
+  listReference:    ['管理者', '會計'],
+  addFromReference: ['管理者'],
+  addByIndustry:    ['管理者'],
+  saveAccount:      ['管理者'],
+  toggleAccount:    ['管理者'],
+  getSettings:      ['管理者', '會計'],
+  saveSettings:     ['管理者'],
+  voucherTemplates: ['管理者', '會計'],
+  listDocs:         ['管理者', '會計', '助理'],
+  uploadDoc:        ['管理者', '會計', '助理'],
+  docFile:          ['管理者', '會計', '助理'],
+  getDoc:           ['管理者', '會計', '助理'],
+  updateDoc:        ['管理者', '會計'],
+  reparseDoc:       ['管理者', '會計'],
+  postDocs:         ['管理者', '會計'],
+  importInvoices:   ['管理者', '會計'],
+  skipDoc:          ['管理者', '會計'],
+  restoreDoc:       ['管理者', '會計']
+};
+
+/** 只有集團管理者能執行的動作（不分公司） */
+var GROUP_ACTIONS = ['listUsers', 'saveUser', 'resetPassword', 'listLog', 'listCompanies', 'createCompany', 'saveCompany', 'saveAppName'];
+/** 集團報表：可看「自己是管理者或會計」的公司，至少兩家才顯示 */
+var CONSOLIDATED_ROLES = ['管理者', '會計'];
+
+var LOGIN_MAX_FAILS = 5;
+var LOGIN_LOCK_SECONDS = 600;
+var LOGIN_GLOBAL_SLOWDOWN = 20;
+var SESSION_SECONDS = 21600; // 6 小時
+
+// ===== 01_Util.js =====
+/**
+ * 公用小工具（不使用任何 Google 服務，可在本機測試）
+ */
+function pad_(n, len) {
+  var s = String(n);
+  while (s.length < len) s = '0' + s;
+  return s;
+}
+
+/** 檢查 yyyy-MM-dd 格式且為真實日期 */
+function isValidDate_(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  var y = Number(s.slice(0, 4)), m = Number(s.slice(5, 7)), d = Number(s.slice(8, 10));
+  if (m < 1 || m > 12 || d < 1) return false;
+  return d <= daysInMonth_(y, m);
+}
+
+function daysInMonth_(y, m) {
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+/** '2026-03' → '2026-03-31' */
+function monthEnd_(period) {
+  var y = Number(period.slice(0, 4)), m = Number(period.slice(5, 7));
+  return period + '-' + pad_(daysInMonth_(y, m), 2);
+}
+
+function monthStart_(period) {
+  return period + '-01';
+}
+
+function isValidPeriod_(p) {
+  return typeof p === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(p);
+}
+
+/** 日期加減天數，回傳 yyyy-MM-dd */
+function addDays_(dateStr, days) {
+  var t = Date.UTC(Number(dateStr.slice(0, 4)), Number(dateStr.slice(5, 7)) - 1, Number(dateStr.slice(8, 10)));
+  var d = new Date(t + days * 86400000);
+  return d.getUTCFullYear() + '-' + pad_(d.getUTCMonth() + 1, 2) + '-' + pad_(d.getUTCDate(), 2);
+}
+
+/** 同一日期往前或往後 n 年（2/29 自動調整為 2/28） */
+function addYears_(dateStr, years) {
+  var y = Number(dateStr.slice(0, 4)) + years, m = Number(dateStr.slice(5, 7)), d = Number(dateStr.slice(8, 10));
+  d = Math.min(d, daysInMonth_(y, m));
+  return y + '-' + pad_(m, 2) + '-' + pad_(d, 2);
+}
+
+/** 兩個日期間的天數（含頭尾） */
+function daySpan_(from, to) {
+  var a = Date.UTC(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10)));
+  var b = Date.UTC(Number(to.slice(0, 4)), Number(to.slice(5, 7)) - 1, Number(to.slice(8, 10)));
+  return Math.round((b - a) / 86400000) + 1;
+}
+
+/** 會計年度第一天：依起始月計算 date 所屬年度 */
+function fiscalYearStart_(dateStr, startMonth) {
+  startMonth = Number(startMonth) || 1;
+  var y = Number(dateStr.slice(0, 4)), m = Number(dateStr.slice(5, 7));
+  if (m < startMonth) y -= 1;
+  return y + '-' + pad_(startMonth, 2) + '-01';
+}
+
+/** 金額轉整數（新台幣），空白視為 0 */
+function toAmount_(v) {
+  if (v === '' || v === null || v === undefined) return 0;
+  var n = Number(String(v).replace(/,/g, ''));
+  return isFinite(n) ? n : NaN;
+}
+
+function round0_(n) {
+  return Math.round(n);
+}
+
+function str_(v) {
+  if (v === null || v === undefined) return '';
+  if (Object.prototype.toString.call(v) === '[object Date]') {
+    var d = v.getFullYear() + '-' + pad_(v.getMonth() + 1, 2) + '-' + pad_(v.getDate(), 2);
+    if (v.getHours() || v.getMinutes() || v.getSeconds()) d += ' ' + pad_(v.getHours(), 2) + ':' + pad_(v.getMinutes(), 2) + ':' + pad_(v.getSeconds(), 2);
+    return d;
+  }
+  return String(v).trim();
+}
+
+function bytesToHex_(bytes) {
+  var out = '';
+  for (var i = 0; i < bytes.length; i++) {
+    var b = bytes[i] < 0 ? bytes[i] + 256 : bytes[i];
+    out += pad_(b.toString(16), 2);
+  }
+  return out;
+}
+
+/** 統一編號檢查碼（財政部 2023 起新規則：可被 5 整除；舊規則可被 10 整除仍有效） */
+function isValidTaxId_(id) {
+  if (!/^\d{8}$/.test(id) || id === '00000000') return false;
+  var w = [1, 2, 1, 2, 1, 2, 4, 1];
+  var sum = 0;
+  for (var i = 0; i < 8; i++) {
+    var p = Number(id.charAt(i)) * w[i];
+    sum += Math.floor(p / 10) + (p % 10);
+  }
+  if (sum % 5 === 0) return true;
+  if (id.charAt(6) === '7' && (sum + 1) % 5 === 0) return true;
+  return false;
+}
+
+// ===== 02_ReferenceAccounts.js =====
+/**
+ * 科目參考庫（公版內建）
+ * 格式：[科目代碼, 科目名稱, 報表區塊, 正常餘額, 適用產業, 盤點對應成本科目, 說明]
+ * - 正常餘額留空 = 依報表區塊預設；填「借」或「貸」= 抵銷科目（如累計折舊、銷貨退回）
+ * - 適用產業用「,」分隔；「通用」代表所有產業都會用到
+ * - 盤點對應成本科目：月底盤點時，存貨差額沖回的成本科目
+ * 本清單為參考範本，正式使用前請記帳士或會計師確認。
+ */
+var REFERENCE_ACCOUNTS = [
+  // ── 流動資產 ──
+  ['1111', '庫存現金', '流動資產', '', '通用', '', '店內收銀與保險箱現金'],
+  ['1112', '零用金', '流動資產', '', '通用', '', '小額零用金'],
+  ['1113', '銀行存款', '流動資產', '', '通用', '', '各銀行帳戶；可用往來對象區分帳戶'],
+  ['1114', '電子支付帳戶', '流動資產', '', '餐飲,食品買賣,醫美診所,生技公司', '', 'LINE Pay、街口等帳戶餘額'],
+  ['1131', '應收票據', '流動資產', '', '通用', '', ''],
+  ['1141', '應收帳款', '流動資產', '', '通用', '', '客戶賒帳、月結客戶'],
+  ['1142', '應收信用卡款', '流動資產', '', '餐飲,食品買賣,醫美診所,生技公司', '', '刷卡收入尚未撥款'],
+  ['1143', '應收外送平台款', '流動資產', '', '餐飲', '', 'Uber Eats、foodpanda 等待撥款'],
+  ['1144', '應收電商平台款', '流動資產', '', '食品製造,食品買賣,生技公司', '', '蝦皮、momo 等待撥款'],
+  ['1151', '其他應收款', '流動資產', '', '通用', '', ''],
+  ['1161', '商品存貨', '流動資產', '', '食品買賣,醫美診所,生技公司', '5121', '買進來直接賣的商品（含保養品、保健食品）；月底盤點'],
+  ['1162', '原料', '流動資產', '', '食品製造', '5131', '生產用原料；月底盤點'],
+  ['1163', '物料及包材', '流動資產', '', '食品製造', '5132', '包裝材料、生產耗材；月底盤點'],
+  ['1164', '在製品', '流動資產', '', '食品製造', '5161', '生產中尚未完成；月底盤點'],
+  ['1165', '製成品', '流動資產', '', '食品製造', '5161', '自製完成待售；月底盤點'],
+  ['1166', '食材及飲料存貨', '流動資產', '', '餐飲', '5171', '廚房食材、飲料；月底盤點'],
+  ['1167', '藥品及醫療耗材', '流動資產', '', '醫美診所', '5181', '針劑、填充劑、醫療耗材；月底盤點'],
+  ['1171', '用品盤存', '流動資產', '', '通用', '', '未用完的營業用品'],
+  ['1181', '預付款項', '流動資產', '', '通用', '', '預付貨款、訂金'],
+  ['1182', '預付費用', '流動資產', '', '通用', '', '預付租金、保險費'],
+  ['1191', '進項稅額', '流動資產', '', '通用', '', '可扣抵的進項營業稅'],
+  ['1192', '留抵稅額', '流動資產', '', '通用', '', '申報後尚未用完的進項稅額'],
+  ['1193', '暫付款', '流動資產', '', '通用', '', '用途待確認的付款'],
+
+  // ── 非流動資產 ──
+  ['1411', '土地', '非流動資產', '', '通用', '', ''],
+  ['1421', '房屋及建築', '非流動資產', '', '通用', '', ''],
+  ['1422', '累計折舊－房屋及建築', '非流動資產', '貸', '通用', '', '抵銷科目'],
+  ['1431', '機器設備', '非流動資產', '', '食品製造,醫美診所,生技公司', '', '生產設備、醫療儀器、實驗設備'],
+  ['1432', '累計折舊－機器設備', '非流動資產', '貸', '食品製造,醫美診所,生技公司', '', '抵銷科目'],
+  ['1441', '生財器具', '非流動資產', '', '通用', '', '餐廚設備、冷凍冷藏櫃、店面設備'],
+  ['1442', '累計折舊－生財器具', '非流動資產', '貸', '通用', '', '抵銷科目'],
+  ['1451', '運輸設備', '非流動資產', '', '通用', '', '貨車、機車'],
+  ['1452', '累計折舊－運輸設備', '非流動資產', '貸', '通用', '', '抵銷科目'],
+  ['1461', '辦公設備', '非流動資產', '', '通用', '', '電腦、POS 機'],
+  ['1462', '累計折舊－辦公設備', '非流動資產', '貸', '通用', '', '抵銷科目'],
+  ['1471', '租賃改良', '非流動資產', '', '通用', '', '承租店面的裝潢工程'],
+  ['1472', '累計折舊－租賃改良', '非流動資產', '貸', '通用', '', '抵銷科目'],
+  ['1481', '未完工程及預付設備款', '非流動資產', '', '通用', '', ''],
+  ['1511', '電腦軟體', '非流動資產', '', '通用', '', ''],
+  ['1512', '累計攤銷－電腦軟體', '非流動資產', '貸', '通用', '', '抵銷科目'],
+  ['1521', '專利權', '非流動資產', '', '生技公司', '', '取得或自行申請的專利'],
+  ['1522', '累計攤銷－專利權', '非流動資產', '貸', '生技公司', '', '抵銷科目'],
+  ['1811', '存出保證金', '非流動資產', '', '通用', '', '店面押金、各項保證金'],
+
+  // ── 流動負債 ──
+  ['2111', '短期借款', '流動負債', '', '通用', '', ''],
+  ['2121', '應付票據', '流動負債', '', '通用', '', ''],
+  ['2131', '應付帳款', '流動負債', '', '通用', '', '供應商月結貨款'],
+  ['2141', '應付費用', '流動負債', '', '通用', '', '已發生未付款的費用'],
+  ['2142', '應付薪資', '流動負債', '', '通用', '', ''],
+  ['2143', '應付勞健保', '流動負債', '', '通用', '', ''],
+  ['2144', '應付退休金', '流動負債', '', '通用', '', '勞退提撥'],
+  ['2151', '其他應付款', '流動負債', '', '通用', '', ''],
+  ['2161', '銷項稅額', '流動負債', '', '通用', '', '銷售時代收的營業稅'],
+  ['2162', '應付營業稅', '流動負債', '', '通用', '', ''],
+  ['2171', '應付所得稅', '流動負債', '', '通用', '', ''],
+  ['2181', '預收貨款', '流動負債', '', '食品製造,食品買賣,生技公司', '', '預購、團購先收款'],
+  ['2182', '預收禮券', '流動負債', '', '餐飲', '', '禮券、儲值金'],
+  ['2183', '預收療程款', '流動負債', '', '醫美診所', '', '療程套組、儲值金先收款；施作後轉為收入'],
+  ['2191', '代收款', '流動負債', '', '通用', '', '代扣所得稅、二代健保'],
+  ['2192', '暫收款', '流動負債', '', '通用', '', '用途待確認的收款'],
+  ['2193', '股東往來', '流動負債', '', '通用', '', '股東代墊或借給公司的款項'],
+
+  // ── 非流動負債 ──
+  ['2411', '長期借款', '非流動負債', '', '通用', '', ''],
+  ['2811', '存入保證金', '非流動負債', '', '通用', '', '收到的押金'],
+
+  // ── 權益 ──
+  ['3111', '資本', '權益', '', '通用', '', '登記資本額'],
+  ['3211', '資本公積', '權益', '', '通用', '', ''],
+  ['3311', '法定盈餘公積', '權益', '', '通用', '', ''],
+  ['3351', '累積盈虧', '權益', '', '通用', '', '以前年度累積的盈餘或虧損'],
+  ['3353', '本期損益', '權益', '', '通用', '', '年度結帳用；平時由系統自動計算'],
+
+  // ── 營業收入 ──
+  ['4111', '銷貨收入－自製產品', '營業收入', '', '食品製造', '', '自己生產的產品'],
+  ['4112', '銷貨收入－商品', '營業收入', '', '食品買賣,醫美診所,生技公司', '', '選品買進再賣（含保養品、保健食品）'],
+  ['4121', '餐飲收入－內用', '營業收入', '', '餐飲', '', ''],
+  ['4122', '餐飲收入－外帶', '營業收入', '', '餐飲', '', ''],
+  ['4123', '餐飲收入－外送平台', '營業收入', '', '餐飲', '', ''],
+  ['4124', '外燴及團膳收入', '營業收入', '', '餐飲,食品製造', '', ''],
+  ['4131', '銷貨退回', '營業收入', '借', '通用', '', '抵銷科目'],
+  ['4132', '銷貨折讓', '營業收入', '借', '通用', '', '抵銷科目'],
+  ['4141', '勞務收入', '營業收入', '', '通用', '', ''],
+  ['4151', '其他營業收入', '營業收入', '', '通用', '', ''],
+  ['4171', '醫療收入－自費療程', '營業收入', '', '醫美診所', '', '診所醫療收入免徵營業稅'],
+  ['4172', '醫療收入－健保給付', '營業收入', '', '醫美診所', '', '有健保門診才使用'],
+  ['4173', '掛號及諮詢費收入', '營業收入', '', '醫美診所', '', ''],
+  ['4181', '技術授權收入', '營業收入', '', '生技公司', '', '專利、技術授權金及權利金'],
+  ['4182', '委託研究收入', '營業收入', '', '生技公司', '', '接受委託的研發、檢測服務'],
+
+  // ── 營業成本 ──
+  ['5121', '進貨', '營業成本', '', '食品買賣,醫美診所,生技公司', '', '商品進貨；月底盤點自動調整'],
+  ['5122', '進貨退出及折讓', '營業成本', '貸', '食品買賣,醫美診所,生技公司', '', '抵銷科目'],
+  ['5131', '原料進料', '營業成本', '', '食品製造', '', '月底盤點自動調整'],
+  ['5132', '物料及包材進料', '營業成本', '', '食品製造', '', '月底盤點自動調整'],
+  ['5141', '直接人工', '營業成本', '', '食品製造', '', '產線人員薪資'],
+  ['5151', '製造費用－間接人工', '營業成本', '', '食品製造', '', ''],
+  ['5152', '製造費用－水電瓦斯', '營業成本', '', '食品製造', '', '工廠水電瓦斯'],
+  ['5153', '製造費用－折舊', '營業成本', '', '食品製造', '', '生產設備折舊'],
+  ['5154', '製造費用－租金', '營業成本', '', '食品製造', '', '工廠租金'],
+  ['5159', '製造費用－其他', '營業成本', '', '食品製造', '', ''],
+  ['5161', '在製品及製成品存貨變動', '營業成本', '', '食品製造', '', '月底盤點自動產生'],
+  ['5171', '食材及飲料進貨', '營業成本', '', '餐飲', '', '月底盤點自動調整'],
+  ['5181', '藥品及醫療耗材進貨', '營業成本', '', '醫美診所', '', '月底盤點自動調整'],
+  ['5182', '醫師費', '營業成本', '', '醫美診所', '', '醫師拆帳、看診費'],
+
+  // ── 營業費用 ──
+  ['6111', '薪資支出', '營業費用', '', '通用', '', ''],
+  ['6112', '臨時工資', '營業費用', '', '通用', '', '時薪人員、工讀生'],
+  ['6121', '租金支出', '營業費用', '', '通用', '', ''],
+  ['6131', '文具用品', '營業費用', '', '通用', '', ''],
+  ['6141', '旅費', '營業費用', '', '通用', '', '出差'],
+  ['6142', '交通費', '營業費用', '', '通用', '', '停車、計程車、油資'],
+  ['6151', '運費', '營業費用', '', '通用', '', '出貨、宅配'],
+  ['6161', '郵電費', '營業費用', '', '通用', '', '電話、網路、郵資'],
+  ['6171', '修繕費', '營業費用', '', '通用', '', ''],
+  ['6181', '廣告費', '營業費用', '', '通用', '', '網路廣告、印刷品'],
+  ['6191', '水電瓦斯費', '營業費用', '', '通用', '', ''],
+  ['6201', '保險費', '營業費用', '', '通用', '', '勞健保公司負擔、商業保險'],
+  ['6211', '交際費', '營業費用', '', '通用', '', '招待客戶；進項稅額不得扣抵'],
+  ['6221', '捐贈', '營業費用', '', '通用', '', ''],
+  ['6231', '稅捐', '營業費用', '', '通用', '', '印花稅、牌照稅、房屋稅'],
+  ['6251', '折舊', '營業費用', '', '通用', '', ''],
+  ['6261', '各項攤提', '營業費用', '', '通用', '', ''],
+  ['6271', '伙食費', '營業費用', '', '通用', '', '員工伙食'],
+  ['6281', '職工福利', '營業費用', '', '通用', '', '員工聚餐、福利品'],
+  ['6291', '佣金支出', '營業費用', '', '通用', '', ''],
+  ['6301', '訓練費', '營業費用', '', '通用', '', ''],
+  ['6311', '退休金', '營業費用', '', '通用', '', '勞退提撥'],
+  ['6321', '勞務費', '營業費用', '', '通用', '', '記帳士、律師、顧問'],
+  ['6331', '手續費', '營業費用', '', '通用', '', '刷卡、匯款手續費'],
+  ['6332', '外送平台服務費', '營業費用', '', '餐飲', '', '外送平台抽成'],
+  ['6333', '電商平台手續費', '營業費用', '', '食品製造,食品買賣,生技公司', '', '電商平台成交手續費'],
+  ['6341', '包裝費', '營業費用', '', '餐飲,食品製造,食品買賣,生技公司', '', '外帶容器、出貨紙箱'],
+  ['6351', '清潔衛生費', '營業費用', '', '餐飲,食品製造', '', '清潔用品、病媒防治'],
+  ['6361', '消耗品', '營業費用', '', '通用', '', ''],
+  ['6371', '資訊服務費', '營業費用', '', '通用', '', 'POS、軟體月租'],
+  ['6381', '研究發展費', '營業費用', '', '食品製造,生技公司', '', '新品研發、實驗材料'],
+  ['6382', '委託研究費', '營業費用', '', '生技公司', '', '委外研究、臨床試驗'],
+  ['6383', '專利及查驗登記規費', '營業費用', '', '生技公司', '', '專利申請與年費、產品查驗登記'],
+  ['6391', '檢驗費', '營業費用', '', '食品製造,食品買賣,生技公司', '', '產品檢驗、認證'],
+  ['6392', '醫療廢棄物處理費', '營業費用', '', '醫美診所', '', ''],
+  ['6399', '雜費', '營業費用', '', '通用', '', ''],
+
+  // ── 營業外收支 ──
+  ['7111', '利息收入', '營業外收入', '', '通用', '', ''],
+  ['7121', '租金收入', '營業外收入', '', '通用', '', ''],
+  ['7131', '處分資產利益', '營業外收入', '', '通用', '', ''],
+  ['7141', '兌換利益', '營業外收入', '', '通用', '', ''],
+  ['7191', '其他收入', '營業外收入', '', '通用', '', '政府補助、雜項收入'],
+  ['7511', '利息支出', '營業外支出', '', '通用', '', ''],
+  ['7521', '處分資產損失', '營業外支出', '', '通用', '', ''],
+  ['7531', '兌換損失', '營業外支出', '', '通用', '', ''],
+  ['7591', '其他損失', '營業外支出', '', '通用', '', ''],
+
+  // ── 所得稅 ──
+  ['8111', '所得稅費用', '所得稅費用', '', '通用', '', '']
+];
+
+/** 把參考庫陣列轉成物件清單 */
+function referenceAccountObjects_() {
+  return REFERENCE_ACCOUNTS.map(function (r) {
+    var block = BLOCKS[r[2]];
+    return {
+      code: r[0],
+      name: r[1],
+      category: block.category,
+      normal: r[3] || block.normal,
+      block: r[2],
+      industries: r[4],
+      stockCost: r[5],
+      note: r[6]
+    };
+  });
+}
+
+// ===== 10_Core.js =====
+/**
+ * 帳務核心計算（純計算，不讀寫試算表，可在本機做單元測試）
+ *
+ * 資料形狀：
+ *  account = { code, name, category, normal, block, industries, stockCost, enabled, source, note }
+ *  opening = [{ code, debit, credit }]
+ *  line    = { no, date, type, lineNo, code, name, debit, credit, memo, party, source, status }
+ */
+
+// ───────────── 科目 ─────────────
+
+function indexAccounts_(accounts) {
+  var map = {};
+  accounts.forEach(function (a) { map[a.code] = a; });
+  return map;
+}
+
+/** 檢查一筆科目資料；isNew 時代碼不可與既有重複 */
+function validateAccount_(acc, accountsByCode, isNew) {
+  var errors = [];
+  var code = str_(acc.code);
+  if (!/^\d{4,6}$/.test(code)) errors.push('科目代碼需為 4～6 位數字');
+  if (!str_(acc.name)) errors.push('請填科目名稱');
+  var block = BLOCKS[acc.block];
+  if (!block) {
+    errors.push('報表區塊不正確');
+  } else if (code && block.digits.indexOf(code.charAt(0)) < 0) {
+    errors.push('「' + acc.block + '」的科目代碼需以 ' + block.digits.join('／') + ' 開頭');
+  }
+  if (acc.normal && acc.normal !== '借' && acc.normal !== '貸') errors.push('正常餘額只能是「借」或「貸」');
+  if (isNew && accountsByCode[code]) errors.push('科目代碼 ' + code + ' 已存在');
+  if (acc.stockCost && acc.block !== '流動資產') errors.push('只有流動資產的存貨科目可以設定盤點對應成本科目');
+  if (acc.stockCost) {
+    var target = accountsByCode[acc.stockCost];
+    if (!target) errors.push('盤點對應成本科目 ' + acc.stockCost + ' 不存在，請先加入該科目');
+    else if (target.block !== '營業成本' && target.block !== '營業費用') errors.push('盤點對應成本科目需為營業成本或營業費用');
+  }
+  return errors;
+}
+
+// ───────────── 傳票 ─────────────
+
+function activeLines_(lines) {
+  return lines.filter(function (l) { return l.status !== '作廢'; });
+}
+
+/**
+ * 檢查傳票
+ * ctx = { accountsByCode, openingDate, lockedPeriods: {'2026-01': true} }
+ */
+function validateVoucher_(v, ctx) {
+  var errors = [];
+  if (!isValidDate_(v.date)) errors.push('日期格式需為 yyyy-MM-dd');
+  else {
+    if (ctx.openingDate && v.date < ctx.openingDate) errors.push('日期早於開帳日 ' + ctx.openingDate);
+    if (ctx.lockedPeriods && ctx.lockedPeriods[v.date.slice(0, 7)]) errors.push(v.date.slice(0, 7) + ' 已鎖帳，不能新增或修改');
+  }
+  if (VOUCHER_TYPES.indexOf(v.type) < 0) errors.push('傳票類型需為 收入／支出／轉帳');
+  var lines = (v.lines || []).filter(function (l) {
+    return str_(l.code) || toAmount_(l.debit) || toAmount_(l.credit);
+  });
+  if (lines.length < 2) errors.push('至少要有兩行分錄');
+  var dr = 0, cr = 0;
+  lines.forEach(function (l, i) {
+    var n = i + 1;
+    var acc = ctx.accountsByCode[str_(l.code)];
+    if (!acc) errors.push('第 ' + n + ' 行：科目 ' + (l.code || '(空白)') + ' 不存在');
+    else if (!acc.enabled) errors.push('第 ' + n + ' 行：科目 ' + acc.code + ' ' + acc.name + ' 已停用');
+    var d = toAmount_(l.debit), c = toAmount_(l.credit);
+    if (isNaN(d) || isNaN(c)) { errors.push('第 ' + n + ' 行：金額不是數字'); return; }
+    if (d < 0 || c < 0) errors.push('第 ' + n + ' 行：金額不可為負數');
+    if (!Number.isInteger(d) || !Number.isInteger(c)) errors.push('第 ' + n + ' 行：金額需為整數（新台幣元）');
+    if (d && c) errors.push('第 ' + n + ' 行：同一行不能同時有借方與貸方');
+    if (!d && !c) errors.push('第 ' + n + ' 行：請填借方或貸方金額');
+    dr += d || 0; cr += c || 0;
+  });
+  if (dr !== cr) errors.push('借貸不平衡：借方 ' + dr + '，貸方 ' + cr + '，差 ' + (dr - cr));
+  if (dr === 0) errors.push('傳票金額不可為 0');
+  return { errors: errors, debit: dr, credit: cr, lines: lines };
+}
+
+/**
+ * 下一個傳票號碼：yyyyMM-0001。取「表上最大號」與「已發出最大號」較大者 + 1，作廢號碼不重複使用。
+ */
+function nextVoucherNo_(existingNos, period, storedSeq) {
+  var prefix = period.replace('-', '') + '-';
+  var max = Number(storedSeq) || 0;
+  existingNos.forEach(function (no) {
+    if (String(no).indexOf(prefix) === 0) {
+      var n = Number(String(no).slice(prefix.length));
+      if (n > max) max = n;
+    }
+  });
+  return { no: prefix + pad_(max + 1, 4), seq: max + 1 };
+}
+
+// ───────────── 期初餘額 ─────────────
+
+function validateOpening_(rows, accountsByCode) {
+  var errors = [], dr = 0, cr = 0;
+  rows.forEach(function (r) {
+    var d = toAmount_(r.debit), c = toAmount_(r.credit);
+    if (isNaN(d) || isNaN(c)) { errors.push('科目 ' + r.code + '：金額不是數字'); return; }
+    if (!d && !c) return;
+    var acc = accountsByCode[r.code];
+    if (!acc) { errors.push('科目 ' + r.code + ' 不存在'); return; }
+    if (BLOCKS[acc.block].statement !== 'BS') errors.push(acc.code + ' ' + acc.name + '：期初餘額只能填資產、負債、權益科目');
+    if (isNaN(d) || isNaN(c) || d < 0 || c < 0 || !Number.isInteger(d) || !Number.isInteger(c)) errors.push(acc.code + ' ' + acc.name + '：金額需為正整數');
+    if (d && c) errors.push(acc.code + ' ' + acc.name + '：借方與貸方只能填一邊');
+    dr += d || 0; cr += c || 0;
+  });
+  return { errors: errors, debit: dr, credit: cr, balanced: dr === cr };
+}
+
+// ───────────── 彙總 ─────────────
+
+/** 依科目加總指定日期區間（含頭尾）的借貸；from 空白 = 從頭；to 空白 = 到最後 */
+function sumByAccount_(lines, from, to) {
+  var out = {};
+  lines.forEach(function (l) {
+    if (l.status === '作廢') return;
+    if (from && l.date < from) return;
+    if (to && l.date > to) return;
+    var s = out[l.code] || (out[l.code] = { debit: 0, credit: 0 });
+    s.debit += Number(l.debit) || 0;
+    s.credit += Number(l.credit) || 0;
+  });
+  return out;
+}
+
+function openingMap_(opening) {
+  var out = {};
+  (opening || []).forEach(function (o) {
+    var s = out[o.code] || (out[o.code] = { debit: 0, credit: 0 });
+    s.debit += Number(o.debit) || 0;
+    s.credit += Number(o.credit) || 0;
+  });
+  return out;
+}
+
+/** 依報表區塊方向換算金額：sign D = 借 − 貸；C = 貸 − 借 */
+function signed_(block, debit, credit) {
+  return BLOCKS[block].sign === 'D' ? debit - credit : credit - debit;
+}
+
+function sortByCode_(a, b) { return a.code < b.code ? -1 : a.code > b.code ? 1 : 0; }
+
+// ───────────── 試算表 ─────────────
+
+/**
+ * 試算表：期初（開帳餘額 + from 之前的分錄）、本期借貸、期末
+ * 回傳每科目的借方餘額／貸方餘額，與合計是否平衡
+ */
+function trialBalance_(accounts, opening, lines, from, to) {
+  var open = openingMap_(opening);
+  var before = from ? sumByAccount_(lines, '', addDays_(from, -1)) : {};
+  var period = sumByAccount_(lines, from, to);
+  var rows = [];
+  var tot = { openDebit: 0, openCredit: 0, debit: 0, credit: 0, closeDebit: 0, closeCredit: 0 };
+  accounts.slice().sort(sortByCode_).forEach(function (a) {
+    var o = open[a.code] || { debit: 0, credit: 0 };
+    var b = before[a.code] || { debit: 0, credit: 0 };
+    var p = period[a.code] || { debit: 0, credit: 0 };
+    var openNet = o.debit - o.credit + b.debit - b.credit;
+    var closeNet = openNet + p.debit - p.credit;
+    if (!openNet && !p.debit && !p.credit) return;
+    var row = {
+      code: a.code, name: a.name, block: a.block,
+      openDebit: openNet > 0 ? openNet : 0, openCredit: openNet < 0 ? -openNet : 0,
+      debit: p.debit, credit: p.credit,
+      closeDebit: closeNet > 0 ? closeNet : 0, closeCredit: closeNet < 0 ? -closeNet : 0
+    };
+    Object.keys(tot).forEach(function (k) { tot[k] += row[k]; });
+    rows.push(row);
+  });
+  return {
+    from: from, to: to, rows: rows, totals: tot,
+    balanced: tot.closeDebit === tot.closeCredit && tot.debit === tot.credit
+  };
+}
+
+// ───────────── 損益表 ─────────────
+
+var IS_BLOCKS = ['營業收入', '營業成本', '營業費用', '營業外收入', '營業外支出', '所得稅費用'];
+
+function incomeStatement_(accounts, lines, from, to) {
+  var sums = sumByAccount_(lines, from, to);
+  var sections = {};
+  IS_BLOCKS.forEach(function (b) { sections[b] = { block: b, rows: [], total: 0 }; });
+  accounts.slice().sort(sortByCode_).forEach(function (a) {
+    if (!sections[a.block]) return;
+    var s = sums[a.code];
+    if (!s) return;
+    var amt = signed_(a.block, s.debit, s.credit);
+    if (!amt) return;
+    sections[a.block].rows.push({ code: a.code, name: a.name, amount: amt });
+    sections[a.block].total += amt;
+  });
+  var rev = sections['營業收入'].total;
+  var cost = sections['營業成本'].total;
+  var gross = rev - cost;
+  var opex = sections['營業費用'].total;
+  var opInc = gross - opex;
+  var pretax = opInc + sections['營業外收入'].total - sections['營業外支出'].total;
+  var net = pretax - sections['所得稅費用'].total;
+  return {
+    from: from, to: to,
+    sections: IS_BLOCKS.map(function (b) { return sections[b]; }),
+    summary: {
+      revenue: rev, cost: cost, grossProfit: gross, opex: opex, operatingIncome: opInc,
+      nonOpIncome: sections['營業外收入'].total, nonOpExpense: sections['營業外支出'].total,
+      pretaxIncome: pretax, incomeTax: sections['所得稅費用'].total, netIncome: net
+    }
+  };
+}
+
+/** 比較期間：prev = 前一段相同天數；lastyear = 去年同期 */
+function compareRange_(from, to, mode) {
+  if (mode === 'lastyear') return { from: addYears_(from, -1), to: addYears_(to, -1) };
+  if (mode === 'prev') {
+    var days = daySpan_(from, to);
+    var isWholeMonths = from.slice(8) === '01' && to === monthEnd_(to.slice(0, 7));
+    if (isWholeMonths) {
+      var months = (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + Number(to.slice(5, 7)) - Number(from.slice(5, 7)) + 1;
+      var pTo = addDays_(from, -1);
+      var y = Number(pTo.slice(0, 4)), m = Number(pTo.slice(5, 7)) - months + 1;
+      while (m < 1) { m += 12; y -= 1; }
+      return { from: y + '-' + pad_(m, 2) + '-01', to: pTo };
+    }
+    return { from: addDays_(from, -days), to: addDays_(from, -1) };
+  }
+  return null;
+}
+
+function netIncome_(accounts, lines, from, to) {
+  return incomeStatement_(accounts, lines, from, to).summary.netIncome;
+}
+
+// ───────────── 資產負債表 ─────────────
+
+var BS_BLOCKS = ['流動資產', '非流動資產', '流動負債', '非流動負債', '權益'];
+
+/**
+ * 資產負債表（截至 asOf）
+ * 權益另加兩列系統計算數：
+ *  - 前期未結轉損益：本會計年度以前、尚未做年度結帳的損益
+ *  - 本期損益：本會計年度第一天到 asOf 的淨利
+ */
+function balanceSheet_(accounts, opening, lines, asOf, fyStartMonth) {
+  var open = openingMap_(opening);
+  var sums = sumByAccount_(lines, '', asOf);
+  var sections = {};
+  BS_BLOCKS.forEach(function (b) { sections[b] = { block: b, rows: [], total: 0 }; });
+  accounts.slice().sort(sortByCode_).forEach(function (a) {
+    if (!sections[a.block]) return;
+    var o = open[a.code] || { debit: 0, credit: 0 };
+    var s = sums[a.code] || { debit: 0, credit: 0 };
+    var amt = signed_(a.block, o.debit + s.debit, o.credit + s.credit);
+    if (!amt) return;
+    sections[a.block].rows.push({ code: a.code, name: a.name, amount: amt });
+    sections[a.block].total += amt;
+  });
+  var fyStart = fiscalYearStart_(asOf, fyStartMonth);
+  var priorUnclosed = netIncome_(accounts, lines, '', addDays_(fyStart, -1));
+  var current = netIncome_(accounts, lines, fyStart, asOf);
+  var eq = sections['權益'];
+  if (priorUnclosed) { eq.rows.push({ code: '', name: '前期未結轉損益', amount: priorUnclosed, computed: true }); eq.total += priorUnclosed; }
+  if (current || !eq.rows.length) { eq.rows.push({ code: '', name: '本期損益', amount: current, computed: true }); eq.total += current; }
+  var assets = sections['流動資產'].total + sections['非流動資產'].total;
+  var liabilities = sections['流動負債'].total + sections['非流動負債'].total;
+  var equity = eq.total;
+  return {
+    asOf: asOf, fiscalYearStart: fyStart,
+    sections: BS_BLOCKS.map(function (b) { return sections[b]; }),
+    summary: {
+      assets: assets, liabilities: liabilities, equity: equity,
+      liabilitiesAndEquity: liabilities + equity,
+      difference: assets - liabilities - equity,
+      currentPeriodIncome: current, priorUnclosedIncome: priorUnclosed
+    }
+  };
+}
+
+// ───────────── 分類帳 ─────────────
+
+/**
+ * 分類帳：單一科目在期間內的每筆分錄與累計餘額
+ * 餘額以科目正常餘額方向顯示（借方科目：借 − 貸；貸方科目：貸 − 借）
+ * party 有值時只看該往來對象（明細分類帳），此時期初只計算該往來對象的分錄
+ */
+function ledger_(accounts, opening, lines, code, from, to, party) {
+  var acc = indexAccounts_(accounts)[code];
+  if (!acc) throw new Error('科目 ' + code + ' 不存在');
+  var dir = acc.normal === '貸' ? -1 : 1;
+  var mine = lines.filter(function (l) {
+    return l.status !== '作廢' && l.code === code && (!party || str_(l.party) === party);
+  });
+  var openNet = 0;
+  if (!party) {
+    var o = openingMap_(opening)[code];
+    if (o) openNet += o.debit - o.credit;
+  }
+  mine.forEach(function (l) { if (from && l.date < from) openNet += (Number(l.debit) || 0) - (Number(l.credit) || 0); });
+  var bal = openNet * dir;
+  var rows = [];
+  var totDr = 0, totCr = 0;
+  mine.filter(function (l) { return (!from || l.date >= from) && (!to || l.date <= to); })
+    .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.no < b.no ? -1 : a.no > b.no ? 1 : a.lineNo - b.lineNo); })
+    .forEach(function (l) {
+      var d = Number(l.debit) || 0, c = Number(l.credit) || 0;
+      bal += (d - c) * dir;
+      totDr += d; totCr += c;
+      rows.push({ date: l.date, no: l.no, memo: l.memo, party: l.party, debit: d, credit: c, balance: bal });
+    });
+  return {
+    code: acc.code, name: acc.name, normal: acc.normal, party: party || '',
+    from: from, to: to, openingBalance: openNet * dir, rows: rows,
+    totalDebit: totDr, totalCredit: totCr, closingBalance: bal
+  };
+}
+
+/** 日記簿：期間內每張傳票與其分錄 */
+function journal_(lines, from, to, includeVoid) {
+  var byNo = {};
+  var order = [];
+  lines.forEach(function (l) {
+    if (!includeVoid && l.status === '作廢') return;
+    if (from && l.date < from) return;
+    if (to && l.date > to) return;
+    if (!byNo[l.no]) {
+      byNo[l.no] = { no: l.no, date: l.date, type: l.type, source: l.source, status: l.status, lines: [], debit: 0, credit: 0 };
+      order.push(l.no);
+    }
+    var v = byNo[l.no];
+    v.lines.push({ lineNo: l.lineNo, code: l.code, name: l.name, debit: Number(l.debit) || 0, credit: Number(l.credit) || 0, memo: l.memo, party: l.party });
+    v.debit += Number(l.debit) || 0;
+    v.credit += Number(l.credit) || 0;
+  });
+  return order.map(function (no) {
+    var v = byNo[no];
+    v.lines.sort(function (a, b) { return a.lineNo - b.lineNo; });
+    v.memo = v.lines.length ? v.lines[0].memo : '';
+    return v;
+  }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.no < b.no ? -1 : 1); });
+}
+
+// ───────────── 月底盤點 ─────────────
+
+/**
+ * 列出所有有「盤點對應成本科目」的存貨科目，與月底帳上金額
+ * excludeNos：重做盤點時，排除本期舊的盤點傳票
+ */
+function stocktakePreview_(accounts, opening, lines, period, excludeNos) {
+  var ex = {};
+  (excludeNos || []).forEach(function (n) { ex[n] = true; });
+  var end = monthEnd_(period);
+  var used = lines.filter(function (l) { return !ex[l.no]; });
+  var open = openingMap_(opening);
+  var sums = sumByAccount_(used, '', end);
+  var byCode = indexAccounts_(accounts);
+  return accounts.filter(function (a) { return a.enabled && a.stockCost; }).sort(sortByCode_).map(function (a) {
+    var o = open[a.code] || { debit: 0, credit: 0 };
+    var s = sums[a.code] || { debit: 0, credit: 0 };
+    var cost = byCode[a.stockCost];
+    return {
+      code: a.code, name: a.name,
+      book: o.debit - o.credit + s.debit - s.credit,
+      costCode: a.stockCost, costName: cost ? cost.name : '(不存在)'
+    };
+  });
+}
+
+/**
+ * 依盤點數產生調整傳票
+ * counts = { '1166': 52000, ... }（未填的科目不調整）
+ * 差額 > 0：借 存貨 / 貸 成本；差額 < 0：借 成本 / 貸 存貨
+ */
+function buildStocktakeVoucher_(period, preview, counts) {
+  var lines = [];
+  var detail = [];
+  preview.forEach(function (p) {
+    if (counts[p.code] === undefined || counts[p.code] === '' || counts[p.code] === null) return;
+    var counted = toAmount_(counts[p.code]);
+    if (isNaN(counted) || counted < 0 || !Number.isInteger(counted)) throw new Error(p.code + ' ' + p.name + '：盤點金額需為 0 以上的整數');
+    var diff = counted - p.book;
+    detail.push({ code: p.code, name: p.name, book: p.book, counted: counted, diff: diff, costCode: p.costCode });
+    if (!diff) return;
+    var memo = period + ' 月底盤點調整－' + p.name;
+    if (diff > 0) {
+      lines.push({ code: p.code, debit: diff, credit: 0, memo: memo, party: '' });
+      lines.push({ code: p.costCode, debit: 0, credit: diff, memo: memo, party: '' });
+    } else {
+      lines.push({ code: p.costCode, debit: -diff, credit: 0, memo: memo, party: '' });
+      lines.push({ code: p.code, debit: 0, credit: -diff, memo: memo, party: '' });
+    }
+  });
+  return {
+    detail: detail,
+    voucher: lines.length ? { date: monthEnd_(period), type: '轉帳', memo: period + ' 月底盤點調整', lines: lines } : null
+  };
+}
+
+// ───────────── 首頁摘要 ─────────────
+
+var CASH_CODES = ['1111', '1112', '1113', '1114'];
+
+function dashboard_(accounts, opening, lines, today, fyStartMonth) {
+  var period = today.slice(0, 7);
+  var month = incomeStatement_(accounts, lines, monthStart_(period), monthEnd_(period));
+  var ytd = incomeStatement_(accounts, lines, fiscalYearStart_(today, fyStartMonth), today);
+  var open = openingMap_(opening);
+  var sums = sumByAccount_(lines, '', today);
+  var cash = 0;
+  CASH_CODES.forEach(function (c) {
+    var o = open[c] || { debit: 0, credit: 0 }, s = sums[c] || { debit: 0, credit: 0 };
+    cash += o.debit - o.credit + s.debit - s.credit;
+  });
+  var tb = trialBalance_(accounts, opening, lines, '', today);
+  return {
+    period: period,
+    month: month.summary,
+    ytd: ytd.summary,
+    cash: cash,
+    balanced: tb.balanced,
+    voucherCount: journal_(lines, monthStart_(period), monthEnd_(period)).length
+  };
+}
+
+// ───────────── 集團合併 ─────────────
+
+/**
+ * 把多家公司的損益表或資產負債表並排，並加總成合併數
+ * items = [{ id, name, statement }]，statement 為 incomeStatement_ 或 balanceSheet_ 的結果（無資料可為 null）
+ * 科目以代碼對齊（系統計算列如「本期損益」以名稱對齊）；名稱取第一家公司的
+ * 注意：尚未沖銷公司間往來
+ */
+function mergeStatements_(items) {
+  var sections = {};
+  var order = [];
+  var summary = {};
+  items.forEach(function (it) {
+    var st = it.statement;
+    if (!st) return;
+    st.sections.forEach(function (sec) {
+      if (!sections[sec.block]) { sections[sec.block] = { block: sec.block, rows: {}, rowOrder: [], totals: {}, total: 0 }; order.push(sec.block); }
+      var S = sections[sec.block];
+      sec.rows.forEach(function (r) {
+        var key = r.code || ('#' + r.name);
+        if (!S.rows[key]) { S.rows[key] = { code: r.code, name: r.name, computed: !!r.computed, amounts: {}, total: 0 }; S.rowOrder.push(key); }
+        S.rows[key].amounts[it.id] = (S.rows[key].amounts[it.id] || 0) + r.amount;
+        S.rows[key].total += r.amount;
+      });
+      S.totals[it.id] = (S.totals[it.id] || 0) + sec.total;
+      S.total += sec.total;
+    });
+    Object.keys(st.summary).forEach(function (k) {
+      if (typeof st.summary[k] !== 'number') return;
+      if (!summary[k]) summary[k] = { total: 0 };
+      summary[k][it.id] = st.summary[k];
+      summary[k].total += st.summary[k];
+    });
+  });
+  return {
+    companies: items.map(function (it) { return { id: it.id, name: it.name, empty: !it.statement, note: it.note || '' }; }),
+    sections: order.map(function (b) {
+      var S = sections[b];
+      var keys = S.rowOrder.slice().sort(function (a, c) {
+        var ra = S.rows[a], rc = S.rows[c];
+        if (ra.computed !== rc.computed) return ra.computed ? 1 : -1;
+        return (ra.code || '') < (rc.code || '') ? -1 : (ra.code || '') > (rc.code || '') ? 1 : 0;
+      });
+      return { block: b, rows: keys.map(function (k) { return S.rows[k]; }), totals: S.totals, total: S.total };
+    }),
+    summary: summary
+  };
+}
+
+// ===== 12_Receipt.js =====
+/**
+ * 單據辨識的純計算（不呼叫任何 Google 服務，可在本機測試）
+ *   parseReceiptText_ ：把 OCR 讀出的文字整理成日期、發票號碼、統編、金額
+ *   parseInvoiceCsv_  ：解析財政部下載的進項發票檔
+ *   suggestExpense_   ：依賣方名稱與內容建議費用科目
+ *   docToLines_       ：單據 → 建議分錄
+ */
+
+/** 民國或西元年月日 → yyyy-MM-dd；不合法回傳 '' */
+function toIsoDate_(y, m, d) {
+  y = Number(y); m = Number(m); d = Number(d);
+  if (!y || !m || !d) return '';
+  if (y < 1000) y += 1911;
+  var s = y + '-' + pad_(m, 2) + '-' + pad_(d, 2);
+  return isValidDate_(s) ? s : '';
+}
+
+/** 單一日期字串（2026-11-03、2026/11/3、115/11/03、1151103、20261103、115年11月3日）→ yyyy-MM-dd */
+function normalizeDate_(v) {
+  var s = str_(v).replace(/\s/g, '');
+  if (!s) return '';
+  var m = /^(\d{2,4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})日?/.exec(s);
+  if (m) return toIsoDate_(m[1], m[2], m[3]);
+  if (/^\d{8}$/.test(s)) return toIsoDate_(s.slice(0, 4), s.slice(4, 6), s.slice(6, 8));
+  if (/^\d{7}$/.test(s)) return toIsoDate_(s.slice(0, 3), s.slice(3, 5), s.slice(5, 7));
+  return '';
+}
+
+/** 文字中的金額字串 → 整數（1,234、NT$1234、$ 1,234.00） */
+function moneyOf_(s) {
+  var t = String(s).replace(/[,，\s]/g, '').replace(/NT\$|\$|元/gi, '');
+  var m = /-?\d+(\.\d+)?/.exec(t);
+  return m ? Math.round(Number(m[0])) : NaN;
+}
+
+/** 找出「關鍵字」後面最近的金額（同一行或下一行） */
+var AMOUNT_STOP = /統一編號|統編|地\s*址|電\s*話|賣\s*方|買\s*(受人|方)|營業人|中文大寫/;
+/** 電子發票證明聯的課稅別勾選欄「應稅 √ 零稅率 免稅」不是金額說明，先拿掉，避免整行被當成免稅排除 */
+var FIELD_STOP = /現金|找零|找回|實收|收現|信用卡|刷卡|付款|營業稅|稅額|銷售額|未稅|小計|總計|合計|總金額|應付|TAX|Tax|TOTAL|Total/;
+var TAX_TYPE_BOX = /應稅\s*[√✓VvＶ]?\s*零稅率\s*[√✓VvＶ]?\s*免稅\s*[√✓VvＶ]?/g;
+function amountAfter_(lines, keywords, exclude) {
+  var re = new RegExp('(' + keywords.join('|') + ')');
+  var ex = exclude ? new RegExp('(' + exclude.join('|') + ')') : null;
+  var best = NaN;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    var hit = re.exec(line);
+    if (!hit || (ex && ex.test(line))) continue;
+    // 只看關鍵字後面、下一個標籤（統編、地址、賣方…）之前的那一段，取第一個數字：
+    // 電子發票證明聯常把「總計 2,151 統一編號… 地址…18樓」排在同一行，取最後一個數字會讀成 18
+    var rest = line.slice(hit.index + hit[0].length).split(AMOUNT_STOP)[0]
+      .replace(/\d+(\.\d+)?\s*[%％]/g, ' ')                                                         // 稅率 5% 不是金額
+      .replace(/(^|[^\d,.])\d+\s*(項|件|個|筆|張|份|杯|盒|包|瓶|pcs|PCS|items?|ITEMS?)(?![數目次])/g, '$1 '); // 「2 項」是數量不是金額
+    // 數字出現之後，遇到另一個金額欄位（現金、找零、營業稅…）就停，不讓別的欄位的金額混進來
+    var firstDigit = rest.search(/\d/);
+    if (firstDigit >= 0) rest = rest.slice(0, firstDigit) + rest.slice(firstDigit).split(FIELD_STOP)[0];
+    var cur = /(NT\$|\$|新[台臺]幣)\s*(\d[\d,]*(\.\d+)?)/.exec(rest);              // 有幣別記號的優先
+    var nums = cur ? [cur[2]] : rest.match(/\d[\d,]*(\.\d+)?/g);
+    if (!nums && i + 1 < lines.length) nums = lines[i + 1].match(/^\s*(NT\$|\$)?\s*(\d[\d,]*(\.\d+)?)\s*元?\s*$/) ? [lines[i + 1]] : null;
+    if (!nums) continue;
+    var v = moneyOf_(nums[0]);
+    if (!isNaN(v) && v > 0 && v < 100000000 && (isNaN(best) || v > best)) best = v;
+  }
+  return best;
+}
+
+/**
+ * 把 OCR 文字整理成欄位。辨識不到的欄位留空，交給使用者補。
+ * own = { taxId, name }：本公司統編與名稱，用來分辨買方與賣方
+ */
+function parseReceiptText_(text, own) {
+  own = own || {};
+  var raw = String(text || '');
+  var lines = raw.split(/\r?\n/).map(function (l) { return l.replace(/　/g, ' ').replace(TAX_TYPE_BOX, ' ').replace(/\s+/g, ' ').trim(); }).filter(String);
+  var flat = lines.join('\n');
+  var BUYER = /買\s*(受人|方)/g, SELLER = /賣\s*方|營業人名稱/g;
+  var out = { kind: '其他', invoiceNo: '', date: '', sellerName: '', sellerTaxId: '', buyerTaxId: '', net: 0, tax: 0, total: 0, src: {} };
+
+  // 發票號碼：兩個英文字母 + 8 碼數字
+  var inv = /(^|[^A-Z])([A-Z]{2})\s*[-－]?\s*(\d{8})(?!\d)/.exec(flat.toUpperCase());
+  if (inv) { out.invoiceNo = inv[2] + inv[3]; out.src.invoiceNo = '原文'; }
+
+  // 日期：先找年月日格式，再找連續數字
+  var dm = /(\d{2,4})\s*[\/\-.年]\s*(\d{1,2})\s*[\/\-.月]\s*(\d{1,2})/g, d;
+  while ((d = dm.exec(flat)) && !out.date) out.date = toIsoDate_(d[1], d[2], d[3]);
+  if (out.date) out.src.date = '原文';
+
+  // 統編：8 碼且檢查碼正確；等於本公司的是買方，其他第一個是賣方
+  var ids = [];
+  (flat.match(/(^|\D)(\d{8})(?!\d)/g) || []).forEach(function (m) {
+    var id = m.replace(/\D/g, '');
+    if (id === out.invoiceNo.slice(2)) return;
+    if (isValidTaxId_(id) && ids.indexOf(id) < 0) ids.push(id);
+  });
+  // 有「統一編號：」標籤的，看它前面最近的是「買方」還是「賣方」
+  var lastAt = function (re, end) {
+    var at = -1, m; re.lastIndex = 0;
+    while ((m = re.exec(flat)) && m.index < end) at = m.index;
+    return at;
+  };
+  var tagRe = /(統一編號|統編)\s*[:：]?\s*(\d{8})(?!\d)/g, tm, tagged = {};
+  while ((tm = tagRe.exec(flat))) {
+    if (!isValidTaxId_(tm[2])) continue;
+    var b = lastAt(BUYER, tm.index), sl = lastAt(SELLER, tm.index);
+    var near = function (at) { return at >= 0 && (flat.slice(at, tm.index).match(/\n/g) || []).length <= 1; }; // 標籤同一行或下一行才算
+    var who = b > sl ? b : sl;
+    if (!near(who)) continue;
+    tagged[tm[2]] = b > sl ? 'buyer' : 'seller';
+  }
+  ids.forEach(function (id) {
+    if (own.taxId && id === own.taxId) out.buyerTaxId = id;
+    else if (tagged[id] === 'buyer') { if (!out.buyerTaxId) out.buyerTaxId = id; }
+    else if (tagged[id] === 'seller') { if (!out.sellerTaxId || tagged[out.sellerTaxId] !== 'seller') out.sellerTaxId = id; }
+    else if (!out.sellerTaxId && tagged[id] !== 'buyer') out.sellerTaxId = id;
+  });
+  if (!own.taxId && !out.buyerTaxId) {
+    var buyerLine = lines.filter(function (l) { return /買\s*(受人|方)/.test(l); })[0];
+    var bm = buyerLine && /(\d{8})/.exec(buyerLine);
+    if (bm && isValidTaxId_(bm[1])) {
+      out.buyerTaxId = bm[1];
+      if (out.sellerTaxId === bm[1]) out.sellerTaxId = ids.filter(function (x) { return x !== bm[1]; })[0] || '';
+    }
+  }
+
+  // 賣方名稱：含「公司、商行、企業社…」且不是本公司的第一行
+  var ownName = str_(own.name);
+  // 先找明確標示「賣方：XXX」的
+  var sm = /(賣\s*方|營業人名稱)\s*[:：]\s*([^\n]{2,80})/.exec(flat);
+  var labeled = sm ? sm[2].split(/統一編號|統編|地\s*址|電\s*話|總計|合計|銷售額|營業稅|發票|買\s*(?:受人|方)|[:：]/)[0].trim() : '';
+  var nameLine = labeled.length >= 2 && (!ownName || labeled.indexOf(ownName) < 0) ? labeled : '';
+  if (!nameLine) nameLine = lines.filter(function (l) {
+    if (!/(股份有限公司|有限公司|公司|商行|企業社|商號|工作室|實業|行號|門市|分公司)/.test(l)) return false;
+    if (ownName && l.indexOf(ownName) >= 0) return false;
+    return !/(統一發票|電子發票|買\s*(受人|方)|發票號碼|地\s*址|電話)/.test(l);
+  })[0];
+  // 找不到公司名稱時：短短一行、以「行、店、社、坊、館、廠」結尾的店名（收據常見）
+  if (!nameLine) nameLine = lines.filter(function (l) {
+    return l.length <= 20 && !/\d/.test(l) && /(行|店|社|坊|館|廠|商號)$/.test(l) && (!ownName || l.indexOf(ownName) < 0) && !/(銀行|發票|收據)/.test(l);
+  })[0];
+  if (nameLine) out.sellerName = nameLine.replace(/^(賣方|營業人|名稱|店名)[:：\s]*/, '').replace(/(統一編號|統編|賣方)[\s\S]*$/, '').trim().slice(0, 40);
+  if (out.sellerName) out.src.sellerName = '原文';
+  if (out.sellerTaxId) out.src.sellerTaxId = '原文';
+  if (out.buyerTaxId) out.src.buyerTaxId = '原文';
+
+  // 金額：讀到的保持原值（不互相覆蓋），對不上的交給 validateDoc_ 警示
+  var src = out.src;
+  var total = amountAfter_(lines, ['總計', '合計', '總金額', '含稅', '應付', '實收', '金額合計', '總額', 'TOTAL', 'Total'], ['未稅', '銷售額', '稅額']);
+  var tax = amountAfter_(lines, ['營業稅', '稅額', '稅金', 'TAX', 'Tax'], ['免稅', '零稅率', '含稅']);
+  var net = amountAfter_(lines, ['銷售額', '未稅', '小計'], ['稅額']);
+  if (!isNaN(tax) && !isNaN(total) && tax >= total) tax = NaN; // 稅額不可能大於總額：視為讀錯
+  if (!isNaN(total)) src.total = '原文';
+  if (!isNaN(tax)) src.tax = '原文';
+  if (!isNaN(net)) src.net = '原文';
+  if (isNaN(total) && !isNaN(net) && !isNaN(tax)) { total = net + tax; src.total = '推算'; }
+  if (!isNaN(total) && !isNaN(tax) && isNaN(net)) { net = total - tax; src.net = '推算'; }
+  if (!isNaN(total) && !isNaN(net) && isNaN(tax) && total >= net) { tax = total - net; src.tax = '推算'; }
+  out.total = isNaN(total) ? 0 : total;
+  out.tax = isNaN(tax) ? 0 : tax;
+  out.net = isNaN(net) ? 0 : net;
+
+  // 種類
+  if (out.invoiceNo) out.kind = out.buyerTaxId ? '統一發票（有統編）' : '統一發票';
+  else if (/收\s*據/.test(flat)) out.kind = '收據';
+  // 只讀到總額：有統編的發票依 5% 拆稅額，其他視為含稅總額（標示「推算」，需人工確認）
+  if (out.total && isNaN(net) && isNaN(tax)) {
+    if (out.invoiceNo && out.buyerTaxId) { var sp = splitTax_(out.total); out.net = sp.net; out.tax = sp.tax; }
+    else { out.net = out.total; out.tax = 0; }
+    src.net = '推算'; src.tax = '推算';
+  }
+  return out;
+}
+
+/** 依關鍵字建議費用科目；食材依產業區分 */
+var EXPENSE_RULES = [
+  // 只有「金流服務費／手續費」才算；收據上寫「付款方式：LINE Pay」不算
+  [/手續費|金流服務|(LINE\s*Pay|街口|綠界|藍新|刷卡)[^\n]{0,8}(服務費|手續費)/i, '6331'],
+  // 醫美診所、生技公司專用科目：公司沒啟用這些科目時會略過，繼續比對下一條
+  [/醫療廢棄物|感染性廢棄物/, '6392'],
+  [/玻尿酸|肉毒|針劑|醫材|醫療器材|醫療耗材|藥品|藥商|藥局|西藥/, '5181'],
+  [/智慧財產局|專利|查驗登記|食品藥物管理署|食藥署/, '6383'],
+  [/試劑|實驗耗材|實驗材料|培養基|儀器耗材/, '6381'],
+  [/中華電信|台灣大哥大|遠傳|亞太電信|電信|寬頻|網路費|電話費/, '6161'],
+  [/台灣電力|台電|電費|自來水|水費|瓦斯|天然氣|欣[^\s]{0,2}瓦斯/, '6191'],
+  [/加油站|中油|台塑石化|全國加油|停車|計程車|高鐵|臺鐵|台鐵|客運|ETC|遠通/, '6142'],
+  [/物流|宅配|快遞|黑貓|新竹貨運|嘉里|郵局|運費|貨運/, '6151'],
+  [/房租|租金/, '6121'],
+  [/保險|產險|人壽/, '6201'],
+  [/廣告|Facebook|Meta|Google Ads|印刷|名片|傳單/, '6181'],
+  [/POS|軟體|訂閱|雲端|月租費/, '6371'],
+  [/修繕|維修|水電行|五金|冷氣|工程行/, '6171'],
+  [/清潔|洗碗|消毒|除蟲|病媒|垃圾/, '6351'],
+  [/餐盒|紙盒|紙杯|吸管|塑膠袋|包材|包裝|免洗/, '6341'],
+  [/文具|影印|書局/, '6131'],
+  [/記帳|會計師|律師|顧問/, '6321'],
+  [/蔬菜|蔬果|青菜|果菜|水產|海鮮|魚|肉品|肉舖|雞|豬|牛|羊|蛋|米|麵|調味|醬|食品|農產|乳品|牛奶|飲料|茶葉|咖啡豆|冷凍食品|食材|生鮮|豆腐|蔥/, 'FOOD']
+];
+
+function suggestExpense_(text, industries, enabledCodes) {
+  var ok = function (c) { return !!enabledCodes[c]; };
+  var s = String(text || '');
+  for (var i = 0; i < EXPENSE_RULES.length; i++) {
+    if (!EXPENSE_RULES[i][0].test(s)) continue;
+    var code = EXPENSE_RULES[i][1];
+    if (code === 'FOOD') {
+      var inds = industries || [];
+      var cands = [];
+      if (inds.indexOf('餐飲') >= 0) cands.push('5171');
+      if (inds.indexOf('食品製造') >= 0) cands.push('5131');
+      if (inds.indexOf('食品買賣') >= 0) cands.push('5121');
+      cands = cands.concat(['5171', '5131', '5121']).filter(ok);
+      if (cands.length) return cands[0];
+      continue;
+    }
+    if (ok(code)) return code;
+  }
+  return ['6399', '6361'].filter(ok)[0] || '';
+}
+
+/** 付款方式可選的科目（只列已啟用的） */
+var PAY_ACCOUNTS = [
+  ['1111', '現金'], ['1112', '零用金'], ['1113', '銀行轉帳'], ['2131', '月結（應付帳款）'], ['2193', '股東代墊'], ['1142', '信用卡']
+];
+
+/**
+ * 單據 → 建議分錄。只有「扣抵判定＝可扣抵」（人工判定）且 1191 進項稅額已啟用時，才拆成費用＋進項稅額；
+ * 其他情況整張金額記入費用。
+ * doc = { total, tax, sellerName, invoiceNo, deductible: '未判定'｜'可扣抵'｜'不可扣抵' }
+ */
+function docToLines_(doc, expenseCode, payCode, enabledCodes) {
+  var total = Number(doc.total) || 0;
+  var tax = Number(doc.tax) || 0;
+  var party = str_(doc.sellerName);
+  var lines = [];
+  if (tax > 0 && tax < total && doc.deductible === '可扣抵' && enabledCodes['1191']) {
+    lines.push({ code: expenseCode, debit: total - tax, credit: 0, party: party });
+    lines.push({ code: '1191', debit: tax, credit: 0, party: party });
+  } else {
+    lines.push({ code: expenseCode, debit: total, credit: 0, party: party });
+  }
+  lines.push({ code: payCode, debit: 0, credit: total, party: party });
+  return lines;
+}
+
+/** 單據摘要：賣方＋發票號碼 */
+/**
+ * 傳票摘要：寫「買了什麼」（品名）＋發票號碼；讀不到品名才用賣方名稱。
+ * 科目已經表達分類、往來對象已經有廠商，摘要不再重複。
+ */
+function docMemo_(doc, item) {
+  return [str_(item) || str_(doc.sellerName) || str_(doc.kind) || '單據', str_(doc.invoiceNo)].filter(String).join(' ');
+}
+
+/**
+ * 從 OCR 原文找品名：
+ *   1. 「品名：XXX」
+ *   2. 表頭「品名 數量 單價 金額 (備註)」後面，每列取第一個數字之前的文字，到銷售額／合計等結尾為止
+ * 最多列 3 項，更多的加「等」。讀不到回傳空字串。
+ */
+function itemNameOf_(text) {
+  var lines = String(text || '').split(/\r?\n/).map(function (l) { return l.replace(/　/g, ' ').replace(/\s+/g, ' ').trim(); }).filter(String);
+  var END = /^(銷售額|未稅|小計|合計|總計|營業稅|稅額|應稅|TOTAL|Total)/;
+  var HEAD = /品\s*名(\s*\/?\s*(規格|摘要))?\s+(數\s*量|單\s*價|金\s*額)(\s+(數\s*量|單\s*價|金\s*額|小\s*計|備\s*註|單\s*位))*/;
+  var clean = function (t) {
+    t = String(t || '').split(/\s(?=[\d,]+(\.\d+)?(\s|$))/)[0]; // 第一個獨立數字（數量、單價）之前
+    t = t.replace(/[\s*＊x×]+$/i, '').trim();
+    return /[\u4e00-\u9fffA-Za-z]{2,}/.test(t) && !/^(品名|數量|單價|金額|備註|發票|統一編號|買方|賣方)/.test(t) ? t.slice(0, 30) : '';
+  };
+  var items = [];
+  for (var i = 0; i < lines.length; i++) {
+    var lab = /品\s*名\s*[:：]\s*(.+)$/.exec(lines[i]);
+    if (lab) { var one = /、/.test(lab[1]) ? lab[1].trim().slice(0, 60) : clean(lab[1]); if (one) items.push(one); continue; }
+    var h = HEAD.exec(lines[i]);
+    if (!h) continue;
+    var first = clean(lines[i].slice(h.index + h[0].length));
+    if (first) items.push(first);
+    for (var j = i + 1; j < lines.length && !END.test(lines[j]); j++) { var it = clean(lines[j]); if (it) items.push(it); }
+    break;
+  }
+  items = items.filter(function (x, k) { return items.indexOf(x) === k; });
+  if (!items.length) return '';
+  return items.slice(0, 3).join('、') + (items.length > 3 ? '等' : '');
+}
+
+/** 解析規則版本：規則改了就加 1，舊單據可用「重新解析」套用新規則 */
+var PARSER_VERSION = 3;
+
+// ───────────── 單據驗證 ─────────────
+
+var DOC_LEVELS = ['正常', '提示', '警示', '錯誤'];
+var DEDUCT_STATES = ['未判定', '可扣抵', '不可扣抵'];
+/** 依營業稅法第 19 條，進項稅額通常不得扣抵的科目（交際費、職工福利、伙食費）；正式使用前請記帳士確認 */
+var NON_DEDUCTIBLE_CODES = ['6211', '6281', '6271'];
+var DOC_FIELDS = ['kind', 'date', 'invoiceNo', 'sellerName', 'sellerTaxId', 'buyerTaxId', 'net', 'tax', 'total'];
+var DOC_FIELD_NAMES = { kind: '種類', date: '日期', invoiceNo: '發票號碼', sellerName: '賣方名稱', sellerTaxId: '賣方統編', buyerTaxId: '買方統編', net: '未稅金額', tax: '稅額', total: '總金額' };
+
+function isInvoiceKind_(kind) { return /發票/.test(str_(kind)); }
+
+/** 疑似重複的比對鍵：沒有發票號碼時，用賣方＋日期＋總額 */
+function suspectKey_(d) {
+  var who = str_(d.sellerTaxId) || str_(d.sellerName);
+  return who && d.date && d.total ? who + '|' + d.date + '|' + d.total : '';
+}
+
+/** 一次建立索引，避免每張單據都掃描全部單據 */
+function buildDocIndex_(docs) {
+  var byInv = {}, bySuspect = {};
+  docs.forEach(function (d) {
+    if (d.status === '略過') return;
+    if (d.invoiceNo) (byInv[d.invoiceNo] = byInv[d.invoiceNo] || []).push(d);
+    var k = suspectKey_(d);
+    if (k && !d.invoiceNo) (bySuspect[k] = bySuspect[k] || []).push(d);
+  });
+  return { byInv: byInv, bySuspect: bySuspect };
+}
+
+/**
+ * 檢查一張單據，回傳問題清單 [{code, level, field, msg}]。
+ * level：錯誤＝不能入帳；警示＝入帳前要核對；提示＝參考
+ * ctx = { ownTaxId, openingDate, lockedPeriods, today, index }
+ */
+function validateDoc_(d, ctx) {
+  ctx = ctx || {};
+  var out = [];
+  var add = function (code, level, field, msg) { out.push({ code: code, level: level, field: field || '', msg: msg, key: code + '|' + (field || '') }); };
+  var invoice = isInvoiceKind_(d.kind);
+  var src = d.src || {};
+  var open = d.status !== '已入帳' && d.status !== '略過';
+
+  if (!d.date || !isValidDate_(d.date)) add('MISSING_DATE', '錯誤', 'date', '缺少日期');
+  if (!(Number(d.total) > 0)) add('MISSING_TOTAL', '錯誤', 'total', '缺少總金額');
+  if (invoice && !d.invoiceNo) add('MISSING_INVOICE_NO', '警示', 'invoiceNo', '發票缺少發票號碼');
+  if (d.invoiceNo && !/^[A-Z]{2}\d{8}$/.test(d.invoiceNo)) add('INVOICE_NO_FORMAT', '警示', 'invoiceNo', '發票號碼格式應為 2 個英文字母＋8 碼數字');
+  if (invoice && !d.sellerTaxId) add('MISSING_SELLER_TAXID', '警示', 'sellerTaxId', '發票缺少賣方統編');
+  if (!d.sellerName && !d.sellerTaxId) add('MISSING_SELLER', '警示', 'sellerName', '缺少賣方（廠商）名稱');
+
+  var net = Number(d.net) || 0, tax = Number(d.tax) || 0, total = Number(d.total) || 0;
+  if (total > 0 && Math.abs(net + tax - total) > 1) add('AMOUNT_MISMATCH', '錯誤', 'total', '未稅 ' + net + ' ＋ 稅額 ' + tax + ' ≠ 總額 ' + total);
+  else if (tax > 0 && net > 0 && Math.abs(tax - Math.round(net * 0.05)) > 1) add('TAX_RATE', '警示', 'tax', '稅額 ' + tax + ' 與未稅 × 5%（' + Math.round(net * 0.05) + '）不符');
+  if (d.sellerTaxId && !isValidTaxId_(d.sellerTaxId)) add('TAXID_INVALID', '警示', 'sellerTaxId', '賣方統編檢查碼不正確');
+  if (d.buyerTaxId && !isValidTaxId_(d.buyerTaxId)) add('TAXID_INVALID', '警示', 'buyerTaxId', '買方統編檢查碼不正確');
+  if (d.buyerTaxId && ctx.ownTaxId && d.buyerTaxId !== ctx.ownTaxId) add('BUYER_NOT_OWN', '警示', 'buyerTaxId', '買方統編不是本公司（' + ctx.ownTaxId + '），進項稅額不得扣抵');
+
+  if (d.date && isValidDate_(d.date) && open) {
+    if (ctx.today && d.date > ctx.today) add('DATE_FUTURE', '錯誤', 'date', '日期在今天之後');
+    if (ctx.openingDate && d.date < ctx.openingDate) add('DATE_BEFORE_OPENING', '錯誤', 'date', '日期早於開帳日 ' + ctx.openingDate);
+    if (ctx.lockedPeriods && ctx.lockedPeriods[d.date.slice(0, 7)]) add('PERIOD_LOCKED', '錯誤', 'date', d.date.slice(0, 7) + ' 已鎖帳');
+  }
+
+  var idx = ctx.index || { byInv: {}, bySuspect: {} };
+  if (d.invoiceNo) {
+    var same = (idx.byInv[d.invoiceNo] || []).filter(function (x) { return x.id !== d.id; });
+    var posted = same.filter(function (x) { return x.status === '已入帳'; })[0];
+    if (posted) add('DUP_POSTED', '錯誤', 'invoiceNo', '發票 ' + d.invoiceNo + ' 已由 ' + posted.id + ' 入帳（傳票 ' + posted.voucherNo + '）');
+    else if (same.length && open) add('DUP_PENDING', '警示', 'invoiceNo', '發票 ' + d.invoiceNo + ' 另有單據 ' + same.map(function (x) { return x.id; }).join('、'));
+  } else {
+    var k = suspectKey_(d);
+    var sus = k ? (idx.bySuspect[k] || []).filter(function (x) { return x.id !== d.id; }) : [];
+    if (sus.length && open) add('DUP_SUSPECT', '警示', 'total', '疑似重複：與 ' + sus.map(function (x) { return x.id; }).join('、') + ' 的廠商、日期、金額相同');
+  }
+
+  if (src._ocr === 'failed') add('OCR_FAILED', '警示', '', '文字辨識失敗，請對照原始單據手動輸入');
+  else if (src._ocr === 'weak') add('OCR_WEAK', '警示', '', '辨識出的文字很少或讀不到金額、日期，請對照原始單據');
+  var derived = DOC_FIELDS.filter(function (f) { return src[f] === '推算'; });
+  if (derived.length) add('DERIVED', '提示', derived[0], derived.map(function (f) { return DOC_FIELD_NAMES[f]; }).join('、') + ' 是系統推算的，請核對');
+  return out;
+}
+
+function docLevel_(issues) {
+  var lv = 0;
+  (issues || []).forEach(function (i) { var n = DOC_LEVELS.indexOf(i.level); if (n > lv) lv = n; });
+  return DOC_LEVELS[lv];
+}
+
+/**
+ * 進項稅額扣抵「建議」（不會自動套用）：全部條件都符合才建議可扣抵。
+ * 不能只看買方統編：還要看公司稅別、單據種類、稅額、費用科目。
+ */
+function deductibleHint_(d, settings, expenseCode) {
+  var reasons = [];
+  var own = str_(settings.taxId);
+  if (!own) reasons.push('公司設定沒有填統一編號，無法核對買方');
+  else if (d.buyerTaxId !== own) reasons.push(d.buyerTaxId ? '買方統編不是本公司' : '單據上沒有本公司統編');
+  if (settings.vatType !== '一般稅額') reasons.push('公司營業稅類型不是一般稅額');
+  if (!isInvoiceKind_(d.kind)) reasons.push('不是統一發票（收據等不能扣抵）');
+  if (!(Number(d.tax) > 0)) reasons.push('沒有稅額');
+  if (expenseCode && NON_DEDUCTIBLE_CODES.indexOf(expenseCode) >= 0) reasons.push('科目 ' + expenseCode + ' 依法通常不得扣抵');
+  if (reasons.length) return { suggest: '不可扣抵', reason: reasons.join('；') };
+  return { suggest: '可扣抵', reason: '買方為本公司、一般稅額、統一發票、有稅額；請確認用途為營業使用' };
+}
+
+// ───────────── 財政部進項發票檔 ─────────────
+
+/** 簡易 CSV 解析（支援引號、逗號、Tab、直線分隔） */
+function splitCsvLine_(line, sep) {
+  var out = [], cur = '', q = false;
+  for (var i = 0; i < line.length; i++) {
+    var c = line.charAt(i);
+    if (q) {
+      if (c === '"' && line.charAt(i + 1) === '"') { cur += '"'; i++; }
+      else if (c === '"') q = false;
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === sep) { out.push(cur.trim()); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+var INVOICE_COLUMNS = {
+  invoiceNo: ['發票號碼', '發票字軌號碼', '字軌號碼'],
+  date: ['發票日期', '開立日期', '日期'],
+  sellerTaxId: ['賣方統一編號', '賣方統編', '銷售人統一編號', '賣方營業人統編', '商店統編'],
+  sellerName: ['賣方名稱', '賣方營業人名稱', '銷售人名稱', '商店店名', '賣方'],
+  buyerTaxId: ['買方統一編號', '買方統編', '買受人統一編號'],
+  net: ['銷售額', '銷售額合計', '未稅金額', '應稅銷售額'],
+  tax: ['營業稅額', '稅額', '營業稅'],
+  total: ['總計', '總金額', '含稅金額', '發票金額', '總額'],
+  status: ['發票狀態', '狀態']
+};
+
+/**
+ * 解析財政部「電子發票整合服務平台」下載的進項發票檔。
+ * 欄位以標題名稱對應（不固定欄位順序），也支援手機條碼載具的「M|…」格式。
+ * 回傳 { rows: [...], skipped: [...說明] }
+ */
+/** 統編被 Excel 去掉開頭的 0（00573951 → 573951）時補回 8 碼 */
+function taxId8_(v) {
+  var t = str_(v).replace(/\s/g, '');
+  return /^\d{1,7}$/.test(t) ? ('0000000' + t).slice(-8) : t;
+}
+
+/** 品名清單 → 「A、B、C等」（去重複，最多 3 項） */
+function itemsLabel_(list) {
+  var u = list.map(function (x) { return str_(x).slice(0, 30); }).filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+  return u.slice(0, 3).join('、') + (u.length > 3 ? '等' : '');
+}
+
+function parseInvoiceCsv_(text) {
+  var lines = String(text || '').replace(/^﻿/, '').split(/\r?\n/).filter(function (l) { return l.trim(); });
+  var rows = [], skipped = [];
+
+  // 載具格式：M|載具類別|載具名稱|發票日期|商店統編|商店店名|發票號碼|總金額|發票狀態
+  if (lines.length && /^[MD]\|/.test(lines[0]) || lines.some(function (l) { return /^M\|/.test(l); })) {
+    lines.filter(function (l) { return /^M\|/.test(l); }).forEach(function (l) {
+      var c = l.split('|');
+      var r = { invoiceNo: str_(c[6]).replace(/[-\s]/g, '').toUpperCase(), date: normalizeDate_(c[3]), sellerTaxId: str_(c[4]), sellerName: str_(c[5]), buyerTaxId: '', total: moneyOf_(c[7]), tax: 0, status: str_(c[8]) };
+      if (/作廢|註銷/.test(r.status)) { skipped.push(r.invoiceNo + ' 已作廢'); return; }
+      r.net = r.total;
+      rows.push(r);
+    });
+    return { rows: rows, skipped: skipped };
+  }
+
+  // 找標題列：含「發票號碼」的那一列
+  var sep = ',';
+  var headIdx = -1, head = [];
+  for (var i = 0; i < Math.min(lines.length, 15); i++) {
+    var s = lines[i].indexOf('\t') >= 0 ? '\t' : lines[i].indexOf('|') >= 0 && lines[i].indexOf(',') < 0 ? '|' : ',';
+    var cells = splitCsvLine_(lines[i], s);
+    if (cells.some(function (c) { return INVOICE_COLUMNS.invoiceNo.indexOf(c.replace(/\s/g, '')) >= 0; })) { headIdx = i; head = cells.map(function (c) { return c.replace(/\s/g, ''); }); sep = s; break; }
+  }
+  if (headIdx < 0) {
+    var first = (lines[0] || '').replace(/\s+/g, ' ').trim();
+    var binary = /[\u0000-\u0008]/.test(first) || /^(\x89PNG|%PDF|PK|ÿØÿ)/.test(first);
+    // 中文變亂碼：Excel 用錯編碼打開財政部檔再存檔，中文會變成一堆「?」或怪字，而且救不回來
+    var garbled = !binary && ((first.match(/\?/g) || []).length >= 3 || (first.match(/\uFFFD/g) || []).length >= 2);
+    if (garbled) throw new Error('這個檔案的中文已經變成亂碼，通常是先用 Excel 打開、再存檔造成的（Excel 會用錯的編碼讀財政部的檔案，存檔後就救不回來）。' +
+      '請回財政部網站重新下載一次，下載後不要打開，直接按「匯入財政部進項發票檔」選它。');
+    throw new Error(binary
+      ? '這不是文字格式的 CSV 檔（看起來是照片、PDF 或 Excel）。照片和 PDF 請按「選擇照片或 PDF」；財政部發票請下載 CSV 格式。'
+      : '看不懂這個檔案：找不到「發票號碼」欄位。檔案第一列是：「' + first.slice(0, 120) + (first.length > 120 ? '…' : '') + '」。請把這段文字或檔案傳給系統管理者確認格式。');
+  }
+  var col = {};
+  Object.keys(INVOICE_COLUMNS).forEach(function (k) {
+    var names = INVOICE_COLUMNS[k];
+    for (var n = 0; n < names.length; n++) { var j = head.indexOf(names[n]); if (j >= 0) { col[k] = j; return; } }
+  });
+  if (col.date === undefined) throw new Error('檔案中找不到「發票日期」欄位');
+  if (col.total === undefined && col.net === undefined) throw new Error('檔案中找不到金額欄位（總計或銷售額）');
+
+  // 財政部「M／D」格式：M 列是發票、D 列是品項明細（D 列有自己的標題列「D,發票號碼,發票日期,序號,品名…」）
+  var md = head[0] === 'M';
+  var dItem = 4, dAmt = 8, items = {};
+  lines.slice(headIdx + 1).forEach(function (l, k) {
+    var c = splitCsvLine_(l, sep);
+    if (md && c[0] !== 'M') {
+      if (c[0] !== 'D') return;
+      if (c.some(function (x) { return x.replace(/\s/g, '') === '品名'; })) {
+        c.forEach(function (x, j) { var h = x.replace(/\s/g, ''); if (h === '品名') dItem = j; if (h === '金額') dAmt = j; });
+        return;
+      }
+      var dn = str_(c[1]).replace(/[-\s]/g, '').toUpperCase(), nm = str_(c[dItem]);
+      if (/^[A-Z]{2}\d{8}$/.test(dn) && nm && !(moneyOf_(c[dAmt]) < 0)) (items[dn] = items[dn] || []).push(nm); // 負數是折扣，不算品名
+      return;
+    }
+    var get = function (key) { return col[key] === undefined ? '' : str_(c[col[key]]); };
+    var no = get('invoiceNo').replace(/[-\s]/g, '').toUpperCase();
+    if (!/^[A-Z]{2}\d{8}$/.test(no)) { if (no) skipped.push('第 ' + (headIdx + k + 2) + ' 列發票號碼「' + no + '」格式不對'); return; }
+    var status = get('status');
+    if (/作廢|註銷|折讓/.test(status)) { skipped.push(no + ' ' + status); return; }
+    var date = normalizeDate_(get('date'));
+    if (!date) { skipped.push(no + ' 日期看不懂（' + get('date') + '）'); return; }
+    var net = moneyOf_(get('net')), tax = moneyOf_(get('tax')), total = moneyOf_(get('total'));
+    if (isNaN(tax)) tax = 0;
+    if (isNaN(total)) total = (isNaN(net) ? 0 : net) + tax;
+    if (isNaN(net)) net = total - tax;
+    if (!total) { skipped.push(no + ' 金額為 0'); return; }
+    rows.push({ invoiceNo: no, date: date, sellerTaxId: taxId8_(get('sellerTaxId')), sellerName: get('sellerName'), buyerTaxId: taxId8_(get('buyerTaxId')), net: net, tax: tax, total: total, status: status });
+  });
+  rows.forEach(function (r) { r.items = itemsLabel_(items[r.invoiceNo] || []); });
+  return { rows: rows, skipped: skipped };
+}
+
+// ===== 15_Templates.js =====
+/**
+ * 常用傳票範本
+ * 新增傳票時選一個範本，科目與借貸自動帶入。
+ * 每行格式：[科目代碼, 'D' 借方 | 'C' 貸方, 金額來源]
+ *   金額來源：'total' 含稅總額（或單一金額）、'net' 未稅、'tax' 稅額（5%）、'' 自己填
+ * 有 net／tax 的範本，畫面會要求輸入「含稅金額」，系統自動拆：未稅＝四捨五入(含稅 ÷ 1.05)，稅額＝含稅 − 未稅。
+ * 只會顯示「公司產業相符」且「所有科目都已啟用」的範本。
+ */
+var VOUCHER_TEMPLATES = [
+  // ── 餐飲：營收 ──
+  { id: 'r-cash', name: '現金營收（含稅）', industries: '餐飲', type: '收入', memo: '現金營收', lines: [['1111', 'D', 'total'], ['4121', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'r-card', name: '刷卡營收（含稅）', industries: '餐飲', type: '收入', memo: '刷卡營收', lines: [['1142', 'D', 'total'], ['4121', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'r-takeout', name: '外帶營收（含稅）', industries: '餐飲', type: '收入', memo: '外帶營收', lines: [['1111', 'D', 'total'], ['4122', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'r-delivery', name: '外送平台營收（含稅）', industries: '餐飲', type: '收入', memo: '外送平台營收', lines: [['1143', 'D', 'total'], ['4123', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'r-delivery-pay', name: '外送平台撥款（扣抽成）', industries: '餐飲', type: '轉帳', memo: '外送平台撥款', lines: [['1113', 'D', ''], ['6332', 'D', ''], ['1143', 'C', '']] },
+  { id: 'r-card-pay', name: '信用卡撥款（扣手續費）', industries: '餐飲,食品買賣,醫美診所,生技公司', type: '轉帳', memo: '信用卡撥款', lines: [['1113', 'D', ''], ['6331', 'D', ''], ['1142', 'C', '']] },
+  { id: 'r-voucher', name: '售出禮券（預收）', industries: '餐飲', type: '收入', memo: '售出禮券', lines: [['1111', 'D', 'total'], ['2182', 'C', 'total']] },
+  // ── 餐飲：成本與費用 ──
+  { id: 'r-food-cash', name: '食材進貨－付現（含稅）', industries: '餐飲', type: '支出', memo: '食材進貨', lines: [['5171', 'D', 'net'], ['1191', 'D', 'tax'], ['1111', 'C', 'total']] },
+  { id: 'r-food-credit', name: '食材進貨－月結（含稅）', industries: '餐飲', type: '轉帳', memo: '食材進貨（月結）', lines: [['5171', 'D', 'net'], ['1191', 'D', 'tax'], ['2131', 'C', 'total']] },
+  { id: 'r-pack', name: '外帶包材（含稅）', industries: '餐飲', type: '支出', memo: '外帶包材', lines: [['6341', 'D', 'net'], ['1191', 'D', 'tax'], ['1111', 'C', 'total']] },
+  { id: 'r-clean', name: '清潔衛生費（含稅）', industries: '餐飲', type: '支出', memo: '清潔衛生費', lines: [['6351', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+
+  // ── 食品：進貨與生產 ──
+  { id: 'f-raw', name: '原料進貨－月結（含稅）', industries: '食品製造', type: '轉帳', memo: '原料進貨（月結）', lines: [['5131', 'D', 'net'], ['1191', 'D', 'tax'], ['2131', 'C', 'total']] },
+  { id: 'f-raw-cash', name: '原料進貨－付現（含稅）', industries: '食品製造', type: '支出', memo: '原料進貨', lines: [['5131', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'f-pack', name: '包材進貨－月結（含稅）', industries: '食品製造', type: '轉帳', memo: '包材進貨（月結）', lines: [['5132', 'D', 'net'], ['1191', 'D', 'tax'], ['2131', 'C', 'total']] },
+  { id: 'f-goods', name: '選品商品進貨－月結（含稅）', industries: '食品買賣,生技公司', type: '轉帳', memo: '商品進貨（月結）', lines: [['5121', 'D', 'net'], ['1191', 'D', 'tax'], ['2131', 'C', 'total']] },
+  { id: 'f-factory-util', name: '工廠水電瓦斯（含稅）', industries: '食品製造', type: '支出', memo: '工廠水電瓦斯', lines: [['5152', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'f-factory-rent', name: '工廠租金（含稅發票）', industries: '食品製造', type: '支出', memo: '工廠租金', lines: [['5154', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'f-line-pay', name: '產線薪資發放', industries: '食品製造', type: '支出', memo: '產線薪資', lines: [['5141', 'D', ''], ['2191', 'C', ''], ['1113', 'C', '']] },
+  // ── 食品：銷售與收款 ──
+  { id: 'f-sale-own', name: '自製產品銷貨－月結客戶（含稅）', industries: '食品製造', type: '轉帳', memo: '自製產品銷貨', lines: [['1141', 'D', 'total'], ['4111', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'f-sale-goods', name: '選品商品銷貨－月結客戶（含稅）', industries: '食品買賣,生技公司', type: '轉帳', memo: '商品銷貨', lines: [['1141', 'D', 'total'], ['4112', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'f-ec-own', name: '電商銷售－自製產品（含稅）', industries: '食品製造', type: '轉帳', memo: '電商銷售（自製）', lines: [['1144', 'D', 'total'], ['4111', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'f-ec-goods', name: '電商銷售－選品（含稅）', industries: '食品買賣,生技公司', type: '轉帳', memo: '電商銷售（選品）', lines: [['1144', 'D', 'total'], ['4112', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'f-ec-pay', name: '電商平台撥款（扣手續費）', industries: '食品製造,食品買賣,生技公司', type: '轉帳', memo: '電商平台撥款', lines: [['1113', 'D', ''], ['6333', 'D', ''], ['1144', 'C', '']] },
+  { id: 'f-preorder', name: '預購先收款', industries: '食品製造,食品買賣,生技公司', type: '收入', memo: '預購收款', lines: [['1113', 'D', 'total'], ['2181', 'C', 'total']] },
+  { id: 'f-ship', name: '出貨運費（含稅）', industries: '食品製造,食品買賣,生技公司', type: '支出', memo: '出貨運費', lines: [['6151', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'f-test', name: '檢驗費（含稅）', industries: '食品製造,食品買賣,生技公司', type: '支出', memo: '檢驗費', lines: [['6391', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  // ── 醫美診所：醫療收入免徵營業稅，進項稅額不能扣抵，所以收入與進貨都不拆稅 ──
+  { id: 'm-treat-cash', name: '療程收入－現金', industries: '醫美診所', type: '收入', memo: '療程收入', lines: [['1111', 'D', 'total'], ['4171', 'C', 'total']] },
+  { id: 'm-treat-card', name: '療程收入－刷卡', industries: '醫美診所', type: '收入', memo: '療程收入（刷卡）', lines: [['1142', 'D', 'total'], ['4171', 'C', 'total']] },
+  { id: 'm-treat-bank', name: '療程收入－轉帳', industries: '醫美診所', type: '收入', memo: '療程收入（轉帳）', lines: [['1113', 'D', 'total'], ['4171', 'C', 'total']] },
+  { id: 'm-package', name: '售出療程套組／儲值（預收）', industries: '醫美診所', type: '收入', memo: '療程套組預收', lines: [['1111', 'D', 'total'], ['2183', 'C', 'total']] },
+  { id: 'm-package-use', name: '套組療程施作（預收轉收入）', industries: '醫美診所', type: '轉帳', memo: '套組療程施作', lines: [['2183', 'D', 'total'], ['4171', 'C', 'total']] },
+  { id: 'm-product', name: '保養品銷售（含稅）', industries: '醫美診所', type: '收入', memo: '保養品銷售', lines: [['1111', 'D', 'total'], ['4112', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'm-drug-credit', name: '藥品耗材進貨－月結', industries: '醫美診所', type: '轉帳', memo: '藥品耗材進貨（月結）', lines: [['5181', 'D', 'total'], ['2131', 'C', 'total']] },
+  { id: 'm-drug-pay', name: '藥品耗材進貨－付款', industries: '醫美診所', type: '支出', memo: '藥品耗材進貨', lines: [['5181', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'm-doctor', name: '醫師費（代扣所得稅）', industries: '醫美診所', type: '支出', memo: '醫師費', lines: [['5182', 'D', ''], ['2191', 'C', ''], ['1113', 'C', '']] },
+  { id: 'm-waste', name: '醫療廢棄物處理費', industries: '醫美診所', type: '支出', memo: '醫療廢棄物處理', lines: [['6392', 'D', 'total'], ['1113', 'C', 'total']] },
+
+  // ── 生技公司：研發、授權 ──
+  { id: 'b-license', name: '技術授權收入－應收（含稅）', industries: '生技公司', type: '轉帳', memo: '技術授權收入', lines: [['1141', 'D', 'total'], ['4181', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'b-research', name: '委託研究收入－應收（含稅）', industries: '生技公司', type: '轉帳', memo: '委託研究收入', lines: [['1141', 'D', 'total'], ['4182', 'C', 'net'], ['2161', 'C', 'tax']] },
+  { id: 'b-rnd', name: '研發材料／實驗耗材（含稅）', industries: '生技公司', type: '支出', memo: '研發材料', lines: [['6381', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'b-cro', name: '委託研究費（含稅）', industries: '生技公司', type: '支出', memo: '委託研究費', lines: [['6382', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'b-patent', name: '專利／查驗登記規費', industries: '生技公司', type: '支出', memo: '專利及查驗登記規費', lines: [['6383', 'D', 'total'], ['1113', 'C', 'total']] },
+
+  // ── 通用 ──
+  { id: 'g-collect', name: '收回客戶貨款', industries: '通用', type: '收入', memo: '收回貨款', lines: [['1113', 'D', 'total'], ['1141', 'C', 'total']] },
+  { id: 'g-pay-ap', name: '支付月結貨款', industries: '通用', type: '支出', memo: '支付月結貨款', lines: [['2131', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-rent', name: '店租／辦公室租金（含稅發票）', industries: '通用', type: '支出', memo: '租金', lines: [['6121', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'g-rent-person', name: '租金（房東個人，無發票）', industries: '通用', type: '支出', memo: '租金', lines: [['6121', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-util', name: '水電瓦斯（含稅）', industries: '通用', type: '支出', memo: '水電瓦斯', lines: [['6191', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'g-phone', name: '電話網路費（含稅）', industries: '通用', type: '支出', memo: '電話網路費', lines: [['6161', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'g-pos', name: 'POS／軟體月租（含稅）', industries: '通用', type: '支出', memo: '軟體月租', lines: [['6371', 'D', 'net'], ['1191', 'D', 'tax'], ['1113', 'C', 'total']] },
+  { id: 'g-salary', name: '薪資發放（扣員工自付勞健保）', industries: '通用', type: '支出', memo: '薪資', lines: [['6111', 'D', ''], ['6112', 'D', ''], ['2191', 'C', ''], ['1113', 'C', '']] },
+  { id: 'g-insurance', name: '勞健保繳款（公司＋員工自付）', industries: '通用', type: '支出', memo: '勞健保', lines: [['6201', 'D', ''], ['2191', 'D', ''], ['1113', 'C', '']] },
+  { id: 'g-pension', name: '勞退提撥', industries: '通用', type: '支出', memo: '勞退提撥', lines: [['6311', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-petty', name: '零用金支付雜支', industries: '通用', type: '支出', memo: '雜支', lines: [['6399', 'D', 'total'], ['1112', 'C', 'total']] },
+  { id: 'g-petty-fill', name: '零用金撥補', industries: '通用', type: '轉帳', memo: '零用金撥補', lines: [['1112', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-cash-deposit', name: '現金存入銀行', industries: '通用', type: '轉帳', memo: '現金存入銀行', lines: [['1113', 'D', 'total'], ['1111', 'C', 'total']] },
+  { id: 'g-owner-paid', name: '股東代墊費用', industries: '通用', type: '轉帳', memo: '股東代墊', lines: [['6399', 'D', 'total'], ['2193', 'C', 'total']] },
+  { id: 'g-entertain', name: '交際費（進項不得扣抵）', industries: '通用', type: '支出', memo: '交際費', lines: [['6211', 'D', 'total'], ['1113', 'C', 'total']] },
+  { id: 'g-staff-meal', name: '員工伙食', industries: '通用', type: '支出', memo: '員工伙食', lines: [['6271', 'D', 'total'], ['1111', 'C', 'total']] },
+  { id: 'g-vat', name: '營業稅繳納（銷項 − 進項）', industries: '通用', type: '支出', memo: '營業稅繳納', lines: [['2161', 'D', ''], ['1191', 'C', ''], ['1113', 'C', '']] },
+  { id: 'g-account-fee', name: '記帳／會計師公費', industries: '通用', type: '支出', memo: '記帳費', lines: [['6321', 'D', 'total'], ['1113', 'C', 'total']] }
+];
+
+/**
+ * 免稅公司（診所）的進項稅額不能扣抵：拿掉借方 1191 進項稅額，含稅金額整筆記入費用或成本。
+ * 銷項稅額（例如診所兼賣保養品）照舊拆出。
+ */
+function exemptLines_(lines) {
+  if (!lines.some(function (l) { return l[0] === '1191' && l[1] === 'D'; })) return lines;
+  return lines.filter(function (l) { return !(l[0] === '1191' && l[1] === 'D'); }).map(function (l) {
+    return l[1] === 'D' && l[2] === 'net' ? [l[0], l[1], 'total'] : l;
+  });
+}
+
+/** 依公司產業、已啟用科目與營業稅類型，挑出可用的範本 */
+function templatesFor_(industries, accounts, vatType) {
+  var inds = (industries || []).concat(['通用']);
+  var enabled = {};
+  accounts.forEach(function (a) { if (a.enabled) enabled[a.code] = a; });
+  var exempt = vatType === '免稅';
+  return VOUCHER_TEMPLATES.map(function (t) {
+    return exempt ? { t: t, lines: exemptLines_(t.lines) } : { t: t, lines: t.lines };
+  }).filter(function (x) {
+    var ok = x.t.industries.split(',').some(function (i) { return inds.indexOf(i) >= 0; });
+    return ok && x.lines.every(function (l) { return enabled[l[0]]; });
+  }).map(function (x) {
+    var t = x.t;
+    var split = x.lines.some(function (l) { return l[2] === 'net' || l[2] === 'tax'; });
+    var single = !split && x.lines.every(function (l) { return l[2] === 'total'; });
+    var name = exempt && x.lines !== t.lines ? t.name.replace('（含稅）', '').replace('（含稅發票）', '') + '（免稅公司：稅額併入費用）' : t.name;
+    return {
+      id: t.id, name: name, type: t.type, memo: t.memo, industries: t.industries,
+      amountMode: split ? 'tax' : single ? 'single' : 'manual',
+      lines: x.lines.map(function (l) { return { code: l[0], side: l[1], part: l[2] }; })
+    };
+  });
+}
+
+/** 含稅金額拆未稅與稅額（5%） */
+function splitTax_(total) {
+  var net = Math.round(total / 1.05);
+  return { net: net, tax: total - net };
+}
+
+/** 依範本與金額產生分錄（測試與前端共用相同規則） */
+function applyTemplate_(tpl, amount) {
+  var parts = tpl.amountMode === 'tax' ? splitTax_(amount) : { net: amount, tax: 0 };
+  return tpl.lines.map(function (l) {
+    var v = l.part === 'total' ? amount : l.part === 'net' ? parts.net : l.part === 'tax' ? parts.tax : 0;
+    return { code: l.code, debit: l.side === 'D' ? v : 0, credit: l.side === 'C' ? v : 0 };
+  });
+}
+
+// ===== 20_Store.js =====
+/**
+ * 試算表讀寫層：所有工作表存取都集中在這裡
+ */
+/**
+ * 目前這次操作所屬的公司（由 api() 依登入者與切換的公司設定）
+ * company = { id, name, spreadsheetId }；null 代表集團主檔本身
+ */
+var CTX = { company: null, ssCache: {} };
+
+/** 集團主檔：程式綁定的那份試算表 */
+function hubSs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss) return ss;
+  var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  if (!id) throw new Error('找不到試算表，請先在試算表中執行「初始設定」');
+  return SpreadsheetApp.openById(id);
+}
+
+/** 網頁與試算表選單顯示的系統名稱：各客戶自訂（指令碼屬性 APP_NAME），沒設定就用公版預設 */
+function appName_() {
+  var name = '';
+  try { name = str_(PropertiesService.getScriptProperties().getProperty('APP_NAME')); } catch (e) { name = ''; }
+  return name || APP.name;
+}
+
+function setAppName_(name) {
+  PropertiesService.getScriptProperties().setProperty('APP_NAME', name);
+}
+
+/** 目前公司的試算表 */
+function ss_() {
+  var c = CTX.company;
+  var hub = hubSs_();
+  if (!c || c.spreadsheetId === hub.getId()) return hub;
+  if (!CTX.ssCache[c.spreadsheetId]) CTX.ssCache[c.spreadsheetId] = SpreadsheetApp.openById(c.spreadsheetId);
+  return CTX.ssCache[c.spreadsheetId];
+}
+
+function sheet_(name) {
+  var sh = (HUB_SHEETS.indexOf(name) >= 0 ? hubSs_() : ss_()).getSheetByName(name);
+  if (!sh) throw new Error('找不到工作表「' + name + '」，請先執行初始設定');
+  return sh;
+}
+
+/** 讀整張表：回傳 { headers, rows }，rows 為二維陣列（不含標題列） */
+function readTable_(name) {
+  var sh = sheet_(name);
+  var lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) return { headers: HEADERS[name].slice(), rows: [] };
+  var values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  return { headers: values[0].map(String), rows: values.slice(1) };
+}
+
+/** 讀成物件陣列，key 為中文欄名，並附上 _row（試算表列號） */
+function readObjects_(name) {
+  var t = readTable_(name);
+  return t.rows.map(function (r, i) {
+    var o = { _row: i + 2 };
+    t.headers.forEach(function (h, j) { o[h] = r[j]; });
+    return o;
+  }).filter(function (o) {
+    return t.headers.some(function (h) { return o[h] !== '' && o[h] !== null; });
+  });
+}
+
+/**
+ * 寫入試算表前的保護：以「=」「+」開頭的文字會被試算表當成公式執行，
+ * 前面加單引號強制存成純文字（試算表讀回時不含單引號）
+ */
+function cellValue_(v) {
+  if (v === undefined || v === null) return '';
+  if (typeof v === 'string' && /^[=+]/.test(v)) return "'" + v;
+  return v;
+}
+
+/** 依標題順序把物件轉成列 */
+function toRow_(name, obj) {
+  return HEADERS[name].map(function (h) { return cellValue_(obj[h]); });
+}
+
+function appendObjects_(name, objs) {
+  if (!objs.length) return;
+  var sh = sheet_(name);
+  var rows = objs.map(function (o) { return toRow_(name, o); });
+  var start = sh.getLastRow() + 1;
+  ensureRows_(sh, name, start + rows.length - 1);
+  sh.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+}
+
+/** 列數不夠時一次多加 500 列，並把文字欄位設為純文字格式 */
+function ensureRows_(sh, name, lastNeeded) {
+  var max = sh.getMaxRows();
+  if (lastNeeded <= max) return;
+  var add = lastNeeded - max + 500;
+  sh.insertRowsAfter(max, add);
+  var headers = HEADERS[name] || [];
+  (TEXT_COLUMNS[name] || []).forEach(function (h) {
+    var col = headers.indexOf(h) + 1;
+    if (col > 0) sh.getRange(max + 1, col, add, 1).setNumberFormat('@');
+  });
+}
+
+/** 更新指定列的部分欄位 */
+function updateCells_(name, rowNumber, patch) {
+  var sh = sheet_(name);
+  var headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+  Object.keys(patch).forEach(function (h) {
+    var col = headers.indexOf(h);
+    if (col < 0) throw new Error('欄位「' + h + '」不存在');
+    sh.getRange(rowNumber, col + 1, 1, 1).setValues([[cellValue_(patch[h])]]);
+  });
+}
+
+/**
+ * 整列更新：先讀出該列，再依標題把 obj 有的欄位換掉，一次寫回（比逐格寫快很多）
+ * obj 沒有的欄位保留原值
+ */
+function updateRow_(name, rowNumber, obj) {
+  var sh = sheet_(name);
+  var width = sh.getLastColumn();
+  var headers = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
+  var range = sh.getRange(rowNumber, 1, 1, width);
+  var row = range.getValues()[0];
+  headers.forEach(function (h, i) { if (Object.prototype.hasOwnProperty.call(obj, h)) row[i] = cellValue_(obj[h]); });
+  range.setValues([row]);
+}
+
+/** 刪除指定列（由下往上刪，連續列一次刪） */
+function deleteRowNumbers_(name, rowNumbers) {
+  if (!rowNumbers.length) return;
+  var sh = sheet_(name);
+  var sorted = rowNumbers.slice().sort(function (a, b) { return b - a; });
+  var i = 0;
+  while (i < sorted.length) {
+    var end = sorted[i], start = end, j = i + 1;
+    while (j < sorted.length && sorted[j] === start - 1) { start = sorted[j]; j++; }
+    sh.deleteRows(start, end - start + 1);
+    i = j;
+  }
+}
+
+/** 清空資料列並整批寫入 */
+function replaceAll_(name, objs) {
+  var sh = sheet_(name);
+  var last = sh.getLastRow();
+  if (last > 1) sh.getRange(2, 1, last - 1, HEADERS[name].length).clearContent();
+  if (objs.length) {
+    var rows = objs.map(function (o) { return toRow_(name, o); });
+    ensureRows_(sh, name, rows.length + 1);
+    sh.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+  }
+}
+
+function nowText_() {
+  return Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
+}
+
+function todayText_() {
+  return Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
+}
+
+function withLock_(fn) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try { return fn(); } finally { lock.releaseLock(); }
+}
+
+// ───────────── 公司設定 ─────────────
+
+function loadSettings_() {
+  var raw = {};
+  readObjects_(SHEETS.SETTINGS).forEach(function (o) { raw[str_(o['項目'])] = str_(o['值']); });
+  return {
+    companyName: raw['公司名稱'] || '',
+    taxId: raw['統一編號'] || '',
+    industries: (raw['產業類別'] || '通用').split(/[,，、]/).map(str_).filter(String),
+    vatType: raw['營業稅類型'] || '一般稅額',
+    fyStartMonth: Number(raw['會計年度起始月']) || 1,
+    openingDate: raw['開帳日'] || ''
+  };
+}
+
+function saveSettings_(s) {
+  var map = {
+    '公司名稱': s.companyName,
+    '統一編號': s.taxId,
+    '產業類別': (s.industries || []).join(','),
+    '營業稅類型': s.vatType,
+    '會計年度起始月': String(s.fyStartMonth),
+    '開帳日': s.openingDate
+  };
+  var rows = readObjects_(SHEETS.SETTINGS);
+  Object.keys(map).forEach(function (k) {
+    var row = rows.filter(function (r) { return str_(r['項目']) === k; })[0];
+    if (row) updateCells_(SHEETS.SETTINGS, row._row, { '值': map[k] });
+    else appendObjects_(SHEETS.SETTINGS, [{ '項目': k, '值': map[k], '說明': '' }]);
+  });
+}
+
+// ───────────── 科目 ─────────────
+
+function accountFromObj_(o) {
+  return {
+    code: str_(o['科目代碼']), name: str_(o['科目名稱']), category: str_(o['類別']),
+    normal: str_(o['正常餘額']), block: str_(o['報表區塊']), industries: str_(o['適用產業']),
+    stockCost: str_(o['盤點對應成本科目']),
+    enabled: o['啟用'] === true || str_(o['啟用']) === 'TRUE' || str_(o['啟用']) === '是',
+    source: str_(o['來源']), note: str_(o['說明']), _row: o._row
+  };
+}
+
+function accountToObj_(a) {
+  var block = BLOCKS[a.block];
+  return {
+    '科目代碼': a.code, '科目名稱': a.name, '類別': block ? block.category : a.category,
+    '正常餘額': a.normal || (block ? block.normal : ''), '報表區塊': a.block, '適用產業': a.industries || '',
+    '盤點對應成本科目': a.stockCost || '', '啟用': a.enabled ? '是' : '否', '來源': a.source || '自訂', '說明': a.note || ''
+  };
+}
+
+function loadAccounts_() {
+  return readObjects_(SHEETS.ACCOUNTS).map(accountFromObj_).filter(function (a) { return a.code; });
+}
+
+function loadReference_() {
+  return readObjects_(SHEETS.REF).map(function (o) {
+    return {
+      code: str_(o['科目代碼']), name: str_(o['科目名稱']), category: str_(o['類別']),
+      normal: str_(o['正常餘額']), block: str_(o['報表區塊']), industries: str_(o['適用產業']),
+      stockCost: str_(o['盤點對應成本科目']), note: str_(o['說明'])
+    };
+  }).filter(function (a) { return a.code; });
+}
+
+// ───────────── 期初餘額 ─────────────
+
+function loadOpening_() {
+  return readObjects_(SHEETS.OPENING).map(function (o) {
+    return { code: str_(o['科目代碼']), name: str_(o['科目名稱']), debit: toAmount_(o['借方']) || 0, credit: toAmount_(o['貸方']) || 0 };
+  }).filter(function (o) { return o.code && (o.debit || o.credit); });
+}
+
+// ───────────── 傳票 ─────────────
+
+function lineFromObj_(o) {
+  return {
+    no: str_(o['傳票號碼']), date: str_(o['日期']), type: str_(o['類型']), lineNo: Number(o['行號']) || 0,
+    code: str_(o['科目代碼']), name: str_(o['科目名稱']),
+    debit: toAmount_(o['借方']) || 0, credit: toAmount_(o['貸方']) || 0,
+    memo: str_(o['摘要']), party: str_(o['往來對象']), source: str_(o['來源']), status: str_(o['狀態']) || '有效',
+    createdBy: str_(o['建立者']), createdAt: str_(o['建立時間']),
+    updatedBy: str_(o['修改者']), updatedAt: str_(o['修改時間']), _row: o._row
+  };
+}
+
+function loadLines_() {
+  return readObjects_(SHEETS.VOUCHERS).map(lineFromObj_).filter(function (l) { return l.no; });
+}
+
+// ───────────── 期間 ─────────────
+
+function loadPeriods_() {
+  return readObjects_(SHEETS.PERIODS).map(function (o) {
+    return { period: str_(o['期間']), status: str_(o['狀態']), lockedBy: str_(o['鎖定人']), lockedAt: str_(o['鎖定時間']), _row: o._row };
+  }).filter(function (p) { return p.period; });
+}
+
+function lockedPeriodsMap_() {
+  var m = {};
+  loadPeriods_().forEach(function (p) { if (p.status === '已鎖定') m[p.period] = true; });
+  return m;
+}
+
+// ───────────── 操作紀錄 ─────────────
+
+function log_(user, action, detail) {
+  try {
+    appendObjects_(SHEETS.LOG, [{ '時間': nowText_(), '帳號': user || '', '動作': action, '內容': typeof detail === 'string' ? detail : JSON.stringify(detail), '公司': CTX.company ? CTX.company.name : '' }]);
+  } catch (e) {
+    // 紀錄失敗不影響主要操作
+  }
+}
+
+// ===== 30_Auth.js =====
+/**
+ * 帳號、登入、權限
+ * 密碼只存 SHA-256(鹽|密碼)，不存明碼；登入憑證放 CacheService 6 小時
+ */
+function hashPassword_(salt, password) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + '|' + password, Utilities.Charset.UTF_8);
+  return bytesToHex_(bytes);
+}
+
+function newSalt_() {
+  return Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+}
+
+/** 隨機臨時密碼：10 碼英數（排除易混淆字元） */
+function randomPassword_() {
+  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  var uuid = Utilities.getUuid().replace(/-/g, '');
+  var out = '';
+  for (var i = 0; i < 10; i++) out += chars.charAt(parseInt(uuid.substr(i * 3, 3), 16) % chars.length);
+  return out;
+}
+
+function validatePasswordStrength_(pw) {
+  if (typeof pw !== 'string' || pw.length < 8) return '密碼至少 8 碼';
+  if (!/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return '密碼需同時包含英文與數字';
+  return '';
+}
+
+function loadUsers_() {
+  return readObjects_(SHEETS.USERS).map(function (o) {
+    return {
+      username: str_(o['帳號']), name: str_(o['姓名']), role: str_(o['角色']),
+      salt: str_(o['鹽']), hash: str_(o['密碼雜湊']),
+      enabled: str_(o['啟用']) !== '否', createdAt: str_(o['建立時間']), lastLogin: str_(o['最後登入']), _row: o._row
+    };
+  }).filter(function (u) { return u.username; });
+}
+
+function findUser_(username) {
+  var key = str_(username).toLowerCase();
+  return loadUsers_().filter(function (u) { return u.username.toLowerCase() === key; })[0] || null;
+}
+
+/**
+ * 登入防護（Apps Script 取不到訪客 IP，因此分兩層）：
+ *  1. 同一個瀏覽器（clientId）錯 5 次 → 這個瀏覽器鎖 10 分鐘
+ *  2. 同一帳號 10 分鐘內全站錯超過 20 次 → 之後每次嘗試延遲 3 秒（減緩猜密碼，但不擋正確密碼，避免被惡意鎖住帳號）
+ */
+function login(username, password, clientId) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var user = str_(username).toLowerCase();
+    var cid = str_(clientId).replace(/[^A-Za-z0-9-]/g, '').slice(0, 40);
+    var u = findUser_(username);
+    // 鎖定計數綁定目前的密碼版本：密碼被重設後，舊的錯誤次數自動歸零
+    var ver = u ? credTag_(u) : 'none';
+    var key = 'fail_' + user + '_' + cid + '_' + ver;
+    var gkey = 'gfail_' + user + '_' + ver;
+    var fails = Number(cache.get(key)) || 0;
+    var gfails = Number(cache.get(gkey)) || 0;
+    if (fails >= LOGIN_MAX_FAILS) return { ok: false, error: '密碼錯誤次數過多，請 10 分鐘後再試（或請管理者重設密碼）' };
+    if (gfails >= LOGIN_GLOBAL_SLOWDOWN) Utilities.sleep(3000);
+    if (!u || !u.enabled || hashPassword_(u.salt, String(password || '')) !== u.hash) {
+      cache.put(key, String(fails + 1), LOGIN_LOCK_SECONDS);
+      cache.put(gkey, String(gfails + 1), LOGIN_LOCK_SECONDS);
+      return { ok: false, error: '帳號或密碼錯誤' };
+    }
+    cache.remove(key);
+    var issued = issueSession_(u);
+    updateCells_(SHEETS.USERS, u._row, { '最後登入': nowText_() });
+    log_(u.username, '登入', '');
+    return { ok: true, data: issued };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** 憑證版本：密碼一改，雜湊就變，舊的登入憑證全部失效 */
+function credTag_(u) {
+  return u.hash.slice(0, 16);
+}
+
+function issueSession_(u) {
+  var token = Utilities.getUuid();
+  var session = { username: u.username, name: u.name, role: u.role, cred: credTag_(u) };
+  CacheService.getScriptCache().put('tok_' + token, JSON.stringify(session), SESSION_SECONDS);
+  return { token: token, user: { username: u.username, name: u.name, role: u.role } };
+}
+
+function logout(token) {
+  CacheService.getScriptCache().remove('tok_' + token);
+  return { ok: true };
+}
+
+function sessionFromToken_(token) {
+  if (!token) return null;
+  var raw = CacheService.getScriptCache().get('tok_' + token);
+  if (!raw) return null;
+  var s = JSON.parse(raw);
+  // 每次確認帳號仍啟用、角色以帳號表為準（改權限立即生效）
+  var u = findUser_(s.username);
+  if (!u || !u.enabled || s.cred !== credTag_(u)) return null;
+  return { username: u.username, name: u.name, groupRole: u.role === '管理者' ? '管理者' : '成員' };
+}
+
+function can_(role, action) {
+  var allowed = PERMISSIONS[action];
+  return !!allowed && allowed.indexOf(role) >= 0;
+}
+
+/** 新增帳號（回傳臨時密碼，只顯示一次）；role 為集團身分：管理者／成員 */
+function createUser_(username, name, role) {
+  username = str_(username);
+  if (!/^[A-Za-z0-9_.-]{3,30}$/.test(username)) throw new Error('帳號需為 3～30 碼英數字');
+  if (GROUP_ROLES.indexOf(role) < 0) throw new Error('身分不正確');
+  if (findUser_(username)) throw new Error('帳號 ' + username + ' 已存在');
+  var salt = newSalt_();
+  var pw = randomPassword_();
+  appendObjects_(SHEETS.USERS, [{
+    '帳號': username, '姓名': str_(name) || username, '角色': role, '鹽': salt,
+    '密碼雜湊': hashPassword_(salt, pw), '啟用': '是', '建立時間': nowText_(), '最後登入': ''
+  }]);
+  return pw;
+}
+
+function setPassword_(user, newPassword) {
+  var salt = newSalt_();
+  updateCells_(SHEETS.USERS, user._row, { '鹽': salt, '密碼雜湊': hashPassword_(salt, newPassword) });
+}
+
+// ===== 40_Api.js =====
+/**
+ * 網頁入口與 API
+ * 前端一律呼叫 api(token, action, payload)，權限在這裡檢查後才回傳資料
+ */
+function doGet() {
+  var t = HtmlService.createTemplateFromFile('Index');
+  t.appName = appName_();
+  return t.evaluate()
+    .setTitle(t.appName)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function include(name) {
+  if (['Css', 'Js'].indexOf(name) < 0) throw new Error('不明的檔案');
+  return HtmlService.createHtmlOutputFromFile(name).getContent();
+}
+
+/**
+ * payload._company：前端目前選的公司代碼。
+ * 除了 bootstrap 以外，指定了沒有權限的公司一律拒絕，避免資料寫到別家公司。
+ */
+function api(token, action, payload) {
+  CTX.company = null;
+  CTX.ssCache = {};
+  try {
+    payload = payload || {};
+    var session = sessionFromToken_(token);
+    if (!session) return { ok: false, error: '登入已逾時，請重新登入', relogin: true };
+    if (!HANDLERS[action]) return { ok: false, error: '不明的操作：' + action };
+    var list = accessibleCompanies_(session);
+    if (!list.length) return { ok: false, error: '您的帳號還沒有被指派任何公司，請洽集團管理者' };
+    var pick = list.filter(function (x) { return x.company.id === payload._company; })[0];
+    if (!pick) {
+      if (payload._company && action !== 'bootstrap') return { ok: false, error: '您沒有這家公司的權限，畫面將重新整理', switchCompany: true };
+      pick = list[0];
+    }
+    CTX.company = pick.company;
+    session.role = pick.role;
+    session.companyId = pick.company.id;
+    session.companies = list;
+    if (GROUP_ACTIONS.indexOf(action) >= 0) {
+      if (session.groupRole !== '管理者') return { ok: false, error: '只有集團管理者可以執行此操作' };
+    } else if (action !== 'consolidated' && !can_(session.role, action)) {
+      return { ok: false, error: '您沒有權限執行此操作' };
+    }
+    var data = HANDLERS[action](payload, session);
+    return { ok: true, data: data };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  } finally {
+    CTX.company = null;
+    CTX.ssCache = {};
+  }
+}
+
+var HANDLERS = {};
+
+// ───────────── 啟動資料 ─────────────
+
+HANDLERS.bootstrap = function (p, s) {
+  var allowed = Object.keys(PERMISSIONS).filter(function (a) { return can_(s.role, a); });
+  if (s.groupRole === '管理者') allowed = allowed.concat(GROUP_ACTIONS);
+  if (consolidatedCompanies_(s).length >= 2) allowed.push('consolidated');
+  var settings = loadSettings_();
+  var accounts = loadAccounts_();
+  return {
+    app: { name: appName_(), version: APP.version },
+    user: { username: s.username, name: s.name, role: s.role, groupRole: s.groupRole },
+    company: { id: CTX.company.id, name: CTX.company.name },
+    companies: s.companies.map(function (x, i) { return { id: x.company.id, name: x.company.name, role: x.role, color: i }; }),
+    allowed: allowed,
+    settings: settings,
+    accounts: accounts,
+    templates: templatesFor_(settings.industries, accounts, settings.vatType),
+    lockedPeriods: lockedPeriodsMap_(),
+    blocks: Object.keys(BLOCKS).map(function (b) { return { name: b, category: BLOCKS[b].category, normal: BLOCKS[b].normal, statement: BLOCKS[b].statement }; }),
+    industries: INDUSTRIES,
+    voucherTypes: VOUCHER_TYPES,
+    roles: ROLES,
+    today: todayText_()
+  };
+};
+
+// ───────────── 傳票 ─────────────
+
+HANDLERS.listVouchers = function (p) {
+  var period = isValidPeriod_(p.period) ? p.period : todayText_().slice(0, 7);
+  var list = journal_(loadLines_(), monthStart_(period), monthEnd_(period), true);
+  var kw = str_(p.keyword).toLowerCase();
+  if (kw) {
+    list = list.filter(function (v) {
+      return v.no.toLowerCase().indexOf(kw) >= 0 || v.lines.some(function (l) {
+        return [l.code, l.name, l.memo, l.party].join(' ').toLowerCase().indexOf(kw) >= 0;
+      });
+    });
+  }
+  var docs = docsByVoucher_();
+  list.forEach(function (v) { v.docs = docs[v.no] || []; });
+  return { period: period, vouchers: list.reverse() };
+};
+
+HANDLERS.getVoucher = function (p) {
+  var v = journal_(loadLines_().filter(function (l) { return l.no === p.no; }), '', '', true)[0];
+  if (!v) throw new Error('找不到傳票 ' + p.no);
+  return v;
+};
+
+HANDLERS.saveVoucher = function (p, s) {
+  return withLock_(function () {
+    // 來源由系統決定，不接受畫面送來的值（避免偽裝成「月底盤點」等系統傳票）
+    p.source = undefined;
+    if (p.docId) {
+      if (p.no) throw new Error('修改傳票時不能再連結單據');
+      // 單據入帳一律走 postDocVoucher_：重新驗證、防重複、扣抵須人工判定，最後仍由 saveVoucherCore_ 檢查分錄
+      return postDocVoucher_({ docId: p.docId, rev: p.rev, lines: p.lines, date: p.date, type: p.type, memo: p.memo, deductible: p.deductible, ackWarnings: p.ackWarnings }, s);
+    }
+    return saveVoucherCore_(p, s);
+  });
+};
+
+/** 新增或修改傳票（不加鎖，呼叫端負責加鎖） */
+function saveVoucherCore_(p, s) {
+    var accounts = loadAccounts_();
+    var byCode = indexAccounts_(accounts);
+    var settings = loadSettings_();
+    var locked = lockedPeriodsMap_();
+    var all = loadLines_();
+    var old = [];
+    if (p.no) {
+      old = all.filter(function (l) { return l.no === p.no; });
+      if (!old.length) throw new Error('找不到傳票 ' + p.no);
+      if (old[0].status === '作廢') throw new Error('已作廢的傳票不能修改');
+      if (old[0].source === '月底盤點') throw new Error('月底盤點傳票請到「月底盤點」重新產生');
+      if (locked[old[0].date.slice(0, 7)]) throw new Error(old[0].date.slice(0, 7) + ' 已鎖帳，不能修改');
+    }
+    var v = { date: str_(p.date), type: str_(p.type), lines: p.lines || [] };
+    var check = validateVoucher_(v, { accountsByCode: byCode, openingDate: settings.openingDate, lockedPeriods: locked });
+    if (check.errors.length) throw new Error(check.errors.join('\n'));
+
+    var no = p.no;
+    if (!no) {
+      var period = v.date.slice(0, 7);
+      var props = PropertiesService.getScriptProperties();
+      var key = 'SEQ_' + (CTX.company ? CTX.company.id + '_' : '') + period.replace('-', '');
+      var next = nextVoucherNo_(all.map(function (l) { return l.no; }), period, props.getProperty(key));
+      no = next.no;
+      props.setProperty(key, String(next.seq));
+    }
+    var now = nowText_();
+    var rows = check.lines.map(function (l, i) {
+      var acc = byCode[str_(l.code)];
+      return {
+        '傳票號碼': no, '日期': v.date, '類型': v.type, '行號': i + 1,
+        '科目代碼': acc.code, '科目名稱': acc.name,
+        '借方': toAmount_(l.debit) || 0, '貸方': toAmount_(l.credit) || 0,
+        '摘要': str_(l.memo) || str_(p.memo), '往來對象': str_(l.party),
+        '來源': p.source || (old.length ? old[0].source : '手動'), '狀態': '有效',
+        '建立者': old.length ? old[0].createdBy : s.username, '建立時間': old.length ? old[0].createdAt : now,
+        '修改者': old.length ? s.username : '', '修改時間': old.length ? now : ''
+      };
+    });
+    if (old.length) deleteRowNumbers_(SHEETS.VOUCHERS, old.map(function (l) { return l._row; }));
+    appendObjects_(SHEETS.VOUCHERS, rows);
+    log_(s.username, old.length ? '修改傳票' : '新增傳票', no + ' ' + v.date + ' 金額 ' + check.debit);
+    return { no: no, debit: check.debit };
+}
+
+HANDLERS.voidVoucher = function (p, s) {
+  return withLock_(function () {
+    var rows = loadLines_().filter(function (l) { return l.no === p.no; });
+    if (!rows.length) throw new Error('找不到傳票 ' + p.no);
+    if (rows[0].status === '作廢') throw new Error('此傳票已作廢');
+    if (rows[0].source === '月底盤點') throw new Error('月底盤點傳票請到「月底盤點」重新盤點或取消盤點');
+    if (lockedPeriodsMap_()[rows[0].date.slice(0, 7)]) throw new Error(rows[0].date.slice(0, 7) + ' 已鎖帳，不能作廢');
+    var reason = str_(p.reason);
+    if (!reason) throw new Error('請填寫作廢原因');
+    var now = nowText_();
+    rows.forEach(function (l) { updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now }); });
+    releaseDocsOf_(p.no, s);
+    log_(s.username, '作廢傳票', p.no + '：' + reason);
+    return { no: p.no };
+  });
+};
+
+// ───────────── 帳簿與報表 ─────────────
+
+/**
+ * 查詢期間：開帳日之前沒有資料。
+ * 起始日早於開帳日時自動從開帳日起算；整段都在開帳日之前則提示沒有資料。
+ */
+function rangeOf_(p) {
+  var today = todayText_();
+  var from = isValidDate_(p.from) ? p.from : monthStart_(today.slice(0, 7));
+  var to = isValidDate_(p.to) ? p.to : today;
+  if (from > to) throw new Error('起始日不可晚於結束日');
+  var od = loadSettings_().openingDate;
+  if (od) {
+    if (to < od) throw new Error('查詢期間早於開帳日 ' + od + '，系統沒有這段期間的資料');
+    if (from < od) from = od;
+  }
+  return { from: from, to: to };
+}
+
+/** 資產負債表等「截至某日」的查詢：最早只能查開帳日前一天（＝期初餘額） */
+function asOfOf_(asOf) {
+  var d = isValidDate_(asOf) ? asOf : todayText_();
+  var od = loadSettings_().openingDate;
+  if (od && d < addDays_(od, -1)) throw new Error('查詢日期早於開帳日 ' + od + '，系統沒有這段期間的資料；最早可查 ' + addDays_(od, -1) + '（期初餘額）');
+  return d;
+}
+
+HANDLERS.journal = function (p) {
+  var r = rangeOf_(p);
+  return { from: r.from, to: r.to, vouchers: journal_(loadLines_(), r.from, r.to, false) };
+};
+
+HANDLERS.ledger = function (p) {
+  var r = rangeOf_(p);
+  return ledger_(loadAccounts_(), loadOpening_(), loadLines_(), str_(p.code), r.from, r.to, str_(p.party));
+};
+
+HANDLERS.trialBalance = function (p) {
+  var r = rangeOf_(p);
+  var tb = trialBalance_(loadAccounts_(), loadOpening_(), loadLines_(), r.from, r.to);
+  tb.companyName = loadSettings_().companyName;
+  return tb;
+};
+
+HANDLERS.incomeStatement = function (p) {
+  var r = rangeOf_(p);
+  var accounts = loadAccounts_(), lines = loadLines_();
+  var out = { companyName: loadSettings_().companyName, current: incomeStatement_(accounts, lines, r.from, r.to), compare: null };
+  var c = compareRange_(r.from, r.to, p.compare);
+  if (c) out.compare = incomeStatement_(accounts, lines, c.from, c.to);
+  return out;
+};
+
+HANDLERS.balanceSheet = function (p) {
+  var asOf = asOfOf_(p.asOf);
+  var settings = loadSettings_();
+  var bs = balanceSheet_(loadAccounts_(), loadOpening_(), loadLines_(), asOf, settings.fyStartMonth);
+  bs.companyName = settings.companyName;
+  return bs;
+};
+
+HANDLERS.dashboard = function () {
+  var settings = loadSettings_();
+  var opening = loadOpening_();
+  var d = dashboard_(loadAccounts_(), opening, loadLines_(), todayText_(), settings.fyStartMonth);
+  var ob = validateOpening_(opening, indexAccounts_(loadAccounts_()));
+  d.openingBalanced = ob.balanced;
+  d.openingCount = opening.length;
+  d.stocktaken = stocktakeRecords_(d.period).length > 0;
+  d.openingDate = settings.openingDate;
+  d.locked = lockedPeriodsMap_();
+  return d;
+};
+
+/** 把三張報表寫到試算表分頁，業主可直接在試算表查看 */
+HANDLERS.writeReports = function (p, s) {
+  var r = rangeOf_(p);
+  var asOf = asOfOf_(isValidDate_(p.asOf) ? p.asOf : r.to);
+  writeReportSheets_(r.from, r.to, asOf);
+  log_(s.username, '寫入報表分頁', r.from + '～' + r.to + '，資產負債表截至 ' + asOf);
+  return { from: r.from, to: r.to, asOf: asOf };
+};
+
+function ensureReportSheet_(name) {
+  var ss = ss_();
+  var sh = ss.getSheetByName(name) || ss.insertSheet(name);
+  sh.clearContents();
+  return sh;
+}
+
+function writeBlock_(sh, rows) {
+  if (!rows.length) return;
+  var width = 0;
+  rows.forEach(function (r) { if (r.length > width) width = r.length; });
+  var data = rows.map(function (r) { var x = r.slice(); while (x.length < width) x.push(''); return x; });
+  sh.getRange(1, 1, data.length, width).setValues(data);
+}
+
+function writeReportSheets_(from, to, asOf) {
+  var settings = loadSettings_();
+  var accounts = loadAccounts_(), opening = loadOpening_(), lines = loadLines_();
+  var stamp = '系統自動產生・請勿在此修改　產生時間 ' + nowText_();
+
+  var tb = trialBalance_(accounts, opening, lines, from, to);
+  var tbRows = [[settings.companyName + ' 試算表', from + ' ～ ' + to], [stamp],
+    ['科目代碼', '科目名稱', '期初借餘', '期初貸餘', '本期借方', '本期貸方', '期末借餘', '期末貸餘']];
+  tb.rows.forEach(function (r) { tbRows.push([r.code, r.name, r.openDebit, r.openCredit, r.debit, r.credit, r.closeDebit, r.closeCredit]); });
+  tbRows.push(['', '合計', tb.totals.openDebit, tb.totals.openCredit, tb.totals.debit, tb.totals.credit, tb.totals.closeDebit, tb.totals.closeCredit]);
+  writeBlock_(ensureReportSheet_(SHEETS.RPT_TB), tbRows);
+
+  var is = incomeStatement_(accounts, lines, from, to);
+  var isRows = [[settings.companyName + ' 損益表', from + ' ～ ' + to], [stamp], ['科目代碼', '項目', '金額']];
+  var sm = is.summary;
+  var after = { '營業成本': ['', '營業毛利', sm.grossProfit], '營業費用': ['', '營業淨利', sm.operatingIncome], '營業外支出': ['', '稅前淨利', sm.pretaxIncome], '所得稅費用': ['', '本期淨利', sm.netIncome] };
+  is.sections.forEach(function (sec) {
+    isRows.push(['', sec.block, '']);
+    sec.rows.forEach(function (r) { isRows.push([r.code, '　' + r.name, r.amount]); });
+    isRows.push(['', sec.block + '合計', sec.total]);
+    if (after[sec.block]) isRows.push(after[sec.block]);
+  });
+  writeBlock_(ensureReportSheet_(SHEETS.RPT_IS), isRows);
+
+  var bs = balanceSheet_(accounts, opening, lines, asOf, settings.fyStartMonth);
+  var bsRows = [[settings.companyName + ' 資產負債表', '截至 ' + asOf], [stamp], ['科目代碼', '項目', '金額']];
+  bs.sections.forEach(function (sec) {
+    bsRows.push(['', sec.block, '']);
+    sec.rows.forEach(function (r) { bsRows.push([r.code, '　' + r.name, r.amount]); });
+    bsRows.push(['', sec.block + '合計', sec.total]);
+  });
+  bsRows.push(['', '資產總計', bs.summary.assets]);
+  bsRows.push(['', '負債及權益總計', bs.summary.liabilitiesAndEquity]);
+  if (bs.summary.difference) bsRows.push(['', '差額（不平衡，請檢查期初餘額）', bs.summary.difference]);
+  writeBlock_(ensureReportSheet_(SHEETS.RPT_BS), bsRows);
+}
+
+// ───────────── 期初餘額 ─────────────
+
+HANDLERS.getOpening = function () {
+  var settings = loadSettings_();
+  var accounts = loadAccounts_().filter(function (a) { return BLOCKS[a.block] && BLOCKS[a.block].statement === 'BS'; });
+  var open = {};
+  loadOpening_().forEach(function (o) { open[o.code] = o; });
+  return {
+    openingDate: settings.openingDate,
+    locked: !!(settings.openingDate && lockedPeriodsMap_()[settings.openingDate.slice(0, 7)]),
+    rows: accounts.sort(sortByCode_).map(function (a) {
+      var o = open[a.code] || { debit: 0, credit: 0 };
+      return { code: a.code, name: a.name, block: a.block, normal: a.normal, enabled: a.enabled, debit: o.debit, credit: o.credit };
+    })
+  };
+};
+
+HANDLERS.saveOpening = function (p, s) {
+  return withLock_(function () {
+    var settings = loadSettings_();
+    if (!settings.openingDate) throw new Error('請先到「公司設定」填寫開帳日');
+    if (lockedPeriodsMap_()[settings.openingDate.slice(0, 7)]) throw new Error('開帳日所在月份已鎖帳，不能修改期初餘額');
+    var byCode = indexAccounts_(loadAccounts_());
+    var rows = (p.rows || []).map(function (r) { return { code: str_(r.code), debit: toAmount_(r.debit), credit: toAmount_(r.credit) }; });
+    var check = validateOpening_(rows, byCode);
+    if (check.errors.length) throw new Error(check.errors.join('\n'));
+    var objs = rows.filter(function (r) { return r.debit || r.credit; }).map(function (r) {
+      return { '科目代碼': r.code, '科目名稱': byCode[r.code].name, '借方': r.debit || 0, '貸方': r.credit || 0 };
+    });
+    replaceAll_(SHEETS.OPENING, objs);
+    log_(s.username, '儲存期初餘額', '借方 ' + check.debit + '，貸方 ' + check.credit);
+    return { debit: check.debit, credit: check.credit, balanced: check.balanced };
+  });
+};
+
+// ───────────── 月底盤點 ─────────────
+
+function stocktakeRecords_(period) {
+  return readObjects_(SHEETS.STOCKTAKE).filter(function (o) { return str_(o['期間']) === period; });
+}
+
+function checkStocktakePeriod_(period) {
+  if (!isValidPeriod_(period)) throw new Error('期間格式需為 yyyy-MM');
+  var od = loadSettings_().openingDate;
+  if (od && monthEnd_(period) < od) throw new Error(period + ' 早於開帳日 ' + od + '，不能盤點');
+}
+
+/** 本期有效（未作廢）的盤點傳票號碼 */
+function activeStocktakeNos_(records, lines) {
+  var priorNos = {};
+  records.forEach(function (r) { if (str_(r['傳票號碼'])) priorNos[str_(r['傳票號碼'])] = true; });
+  return Object.keys(priorNos).filter(function (no) { return lines.some(function (l) { return l.no === no && l.status !== '作廢'; }); });
+}
+
+HANDLERS.stocktakePreview = function (p) {
+  var period = str_(p.period);
+  checkStocktakePeriod_(period);
+  var records = stocktakeRecords_(period);
+  var lines = loadLines_();
+  var activeNos = activeStocktakeNos_(records, lines);
+  var preview = stocktakePreview_(loadAccounts_(), loadOpening_(), lines, period, activeNos);
+  var counted = {};
+  records.forEach(function (r) { counted[str_(r['存貨科目'])] = toAmount_(r['盤點金額']); });
+  preview.forEach(function (row) { row.counted = counted[row.code] !== undefined ? counted[row.code] : ''; });
+  return { period: period, endDate: monthEnd_(period), locked: !!lockedPeriodsMap_()[period], rows: preview, priorVouchers: activeNos };
+};
+
+HANDLERS.stocktakeSave = function (p, s) {
+  return withLock_(function () {
+    var period = str_(p.period);
+    checkStocktakePeriod_(period);
+    var locked = lockedPeriodsMap_();
+    if (locked[period]) throw new Error(period + ' 已鎖帳');
+    var lines = loadLines_();
+    var records = stocktakeRecords_(period);
+    var activeNos = activeStocktakeNos_(records, lines);
+    var accounts = loadAccounts_();
+    var preview = stocktakePreview_(accounts, loadOpening_(), lines, period, activeNos);
+    var built = buildStocktakeVoucher_(period, preview, p.counts || {});
+    if (!built.detail.length) throw new Error('請至少填一個存貨科目的盤點金額');
+
+    // 先確認新傳票可以成立，才作廢舊的（避免舊傳票作廢了、新傳票卻存不進去）
+    if (built.voucher) {
+      var check = validateVoucher_(built.voucher, { accountsByCode: indexAccounts_(accounts), openingDate: loadSettings_().openingDate, lockedPeriods: locked });
+      if (check.errors.length) throw new Error('無法產生盤點傳票：\n' + check.errors.join('\n'));
+    }
+    var now = nowText_();
+    lines.forEach(function (l) {
+      if (activeNos.indexOf(l.no) >= 0) updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now });
+    });
+    var newNo = '';
+    if (built.voucher) {
+      built.voucher.source = '月底盤點';
+      newNo = saveVoucherCore_(built.voucher, s).no;
+    }
+    deleteRowNumbers_(SHEETS.STOCKTAKE, records.map(function (r) { return r._row; }));
+    appendObjects_(SHEETS.STOCKTAKE, built.detail.map(function (d) {
+      return {
+        '期間': period, '存貨科目': d.code, '存貨名稱': d.name, '帳上金額': d.book, '盤點金額': d.counted,
+        '差額': d.diff, '對應成本科目': d.costCode, '傳票號碼': newNo, '建立者': s.username, '建立時間': now
+      };
+    }));
+    log_(s.username, '月底盤點', period + (newNo ? ' 產生傳票 ' + newNo : ' 無差額') + (activeNos.length ? '，作廢舊傳票 ' + activeNos.join('、') : ''));
+    return { period: period, voucherNo: newNo, detail: built.detail, voided: activeNos };
+  });
+};
+
+/** 取消本月盤點：作廢盤點傳票並刪除盤點紀錄 */
+HANDLERS.stocktakeClear = function (p, s) {
+  return withLock_(function () {
+    var period = str_(p.period);
+    checkStocktakePeriod_(period);
+    if (lockedPeriodsMap_()[period]) throw new Error(period + ' 已鎖帳');
+    var reason = str_(p.reason);
+    if (!reason) throw new Error('請填寫取消原因');
+    var lines = loadLines_();
+    var records = stocktakeRecords_(period);
+    if (!records.length) throw new Error(period + ' 沒有盤點紀錄');
+    var activeNos = activeStocktakeNos_(records, lines);
+    var now = nowText_();
+    lines.forEach(function (l) {
+      if (activeNos.indexOf(l.no) >= 0) updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now });
+    });
+    deleteRowNumbers_(SHEETS.STOCKTAKE, records.map(function (r) { return r._row; }));
+    log_(s.username, '取消月底盤點', period + '：' + reason + (activeNos.length ? '，作廢傳票 ' + activeNos.join('、') : ''));
+    return { period: period, voided: activeNos };
+  });
+};
+
+// ───────────── 期間鎖帳 ─────────────
+
+HANDLERS.listPeriods = function () {
+  var settings = loadSettings_();
+  var lines = loadLines_();
+  var today = todayText_();
+  var first = settings.openingDate ? settings.openingDate.slice(0, 7) : today.slice(0, 7);
+  lines.forEach(function (l) { if (l.date && l.date.slice(0, 7) < first) first = l.date.slice(0, 7); });
+  var map = {};
+  loadPeriods_().forEach(function (p) { map[p.period] = p; });
+  var counts = {};
+  activeLines_(lines).forEach(function (l) { var k = l.date.slice(0, 7); counts[k] = counts[k] || {}; counts[k][l.no] = true; });
+  var out = [];
+  var y = Number(first.slice(0, 4)), m = Number(first.slice(5, 7));
+  var last = today.slice(0, 7);
+  var guard = 0;
+  while (guard++ < 600) {
+    var k = y + '-' + pad_(m, 2);
+    var rec = map[k] || {};
+    out.push({ period: k, status: rec.status || '開放', lockedBy: rec.lockedBy || '', lockedAt: rec.lockedAt || '', vouchers: counts[k] ? Object.keys(counts[k]).length : 0 });
+    if (k >= last) break;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out.reverse();
+};
+
+function setPeriodStatus_(period, status, s) {
+  if (!isValidPeriod_(period)) throw new Error('期間格式需為 yyyy-MM');
+  var rec = loadPeriods_().filter(function (p) { return p.period === period; })[0];
+  var patch = { '狀態': status, '鎖定人': status === '已鎖定' ? s.username : '', '鎖定時間': status === '已鎖定' ? nowText_() : '' };
+  if (rec) updateCells_(SHEETS.PERIODS, rec._row, patch);
+  else appendObjects_(SHEETS.PERIODS, [{ '期間': period, '狀態': status, '鎖定人': patch['鎖定人'], '鎖定時間': patch['鎖定時間'] }]);
+}
+
+HANDLERS.lockPeriod = function (p, s) {
+  return withLock_(function () {
+    var period = str_(p.period);
+    var tb = trialBalance_(loadAccounts_(), loadOpening_(), loadLines_(), '', monthEnd_(period));
+    if (!tb.balanced) throw new Error('截至 ' + monthEnd_(period) + ' 的試算表借貸不平衡（多半是期初餘額未平衡），請先修正再鎖帳');
+    setPeriodStatus_(period, '已鎖定', s);
+    log_(s.username, '鎖帳', period);
+    return { period: period };
+  });
+};
+
+HANDLERS.unlockPeriod = function (p, s) {
+  return withLock_(function () {
+    var reason = str_(p.reason);
+    if (!reason) throw new Error('請填寫解鎖原因');
+    setPeriodStatus_(str_(p.period), '開放', s);
+    log_(s.username, '解鎖', p.period + '：' + reason);
+    return { period: p.period };
+  });
+};
+
+// ───────────── 科目管理 ─────────────
+
+HANDLERS.listReference = function () {
+  var mine = indexAccounts_(loadAccounts_());
+  return loadReference_().map(function (r) { r.inCompany = !!mine[r.code]; return r; });
+};
+
+function addReferenceAccounts_(codes, s) {
+  var ref = indexAccounts_(loadReference_());
+  var mine = indexAccounts_(loadAccounts_());
+  var toAdd = {};
+  codes.forEach(function (c) {
+    var r = ref[c];
+    if (!r || mine[c]) return;
+    toAdd[c] = r;
+    if (r.stockCost && !mine[r.stockCost] && ref[r.stockCost]) toAdd[r.stockCost] = ref[r.stockCost];
+  });
+  var list = Object.keys(toAdd).sort().map(function (c) {
+    var r = toAdd[c];
+    return accountToObj_({ code: r.code, name: r.name, normal: r.normal, block: r.block, industries: r.industries, stockCost: r.stockCost, enabled: true, source: '參考庫', note: r.note });
+  });
+  appendObjects_(SHEETS.ACCOUNTS, list);
+  if (list.length) log_(s.username, '加入參考科目', list.map(function (o) { return o['科目代碼']; }).join('、'));
+  return { added: list.length };
+}
+
+HANDLERS.addFromReference = function (p, s) {
+  return withLock_(function () { return addReferenceAccounts_(p.codes || [], s); });
+};
+
+HANDLERS.addByIndustry = function (p, s) {
+  return withLock_(function () {
+    var wanted = (p.industries || []).concat(['通用']);
+    var codes = loadReference_().filter(function (r) {
+      return r.industries.split(',').some(function (i) { return wanted.indexOf(str_(i)) >= 0; });
+    }).map(function (r) { return r.code; });
+    return addReferenceAccounts_(codes, s);
+  });
+};
+
+HANDLERS.saveAccount = function (p, s) {
+  return withLock_(function () {
+    var a = p.account || {};
+    var accounts = loadAccounts_();
+    var byCode = indexAccounts_(accounts);
+    var acc = {
+      code: str_(a.code), name: str_(a.name), block: str_(a.block), normal: str_(a.normal),
+      industries: str_(a.industries), stockCost: str_(a.stockCost), note: str_(a.note),
+      enabled: a.enabled !== false
+    };
+    var errors = validateAccount_(acc, byCode, !!p.isNew);
+    if (acc.stockCost === acc.code) errors.push('盤點對應成本科目不能是自己');
+    if (errors.length) throw new Error(errors.join('\n'));
+    if (p.isNew) {
+      acc.source = '自訂';
+      appendObjects_(SHEETS.ACCOUNTS, [accountToObj_(acc)]);
+      log_(s.username, '新增科目', acc.code + ' ' + acc.name);
+    } else {
+      var old = byCode[acc.code];
+      if (!old) throw new Error('科目 ' + acc.code + ' 不存在');
+      var used = loadLines_().some(function (l) { return l.code === acc.code; }) || loadOpening_().some(function (o) { return o.code === acc.code; });
+      if (used && old.block !== acc.block) throw new Error('此科目已有分錄或期初餘額，不能更改報表區塊；請停用後另開新科目');
+      acc.source = old.source;
+      var obj = accountToObj_(acc);
+      updateCells_(SHEETS.ACCOUNTS, old._row, obj);
+      log_(s.username, '修改科目', acc.code + ' ' + acc.name);
+    }
+    return { code: acc.code };
+  });
+};
+
+HANDLERS.toggleAccount = function (p, s) {
+  return withLock_(function () {
+    var acc = indexAccounts_(loadAccounts_())[str_(p.code)];
+    if (!acc) throw new Error('科目不存在');
+    updateCells_(SHEETS.ACCOUNTS, acc._row, { '啟用': p.enabled ? '是' : '否' });
+    log_(s.username, p.enabled ? '啟用科目' : '停用科目', acc.code + ' ' + acc.name);
+    return { code: acc.code, enabled: !!p.enabled };
+  });
+};
+
+// ───────────── 公司設定 ─────────────
+
+HANDLERS.getSettings = function () {
+  return loadSettings_();
+};
+
+HANDLERS.saveSettings = function (p, s) {
+  return withLock_(function () {
+    var errors = [];
+    var st = {
+      companyName: str_(p.companyName), taxId: str_(p.taxId),
+      industries: (p.industries || []).filter(function (i) { return INDUSTRIES.indexOf(i) >= 0; }),
+      vatType: str_(p.vatType), fyStartMonth: Number(p.fyStartMonth), openingDate: str_(p.openingDate)
+    };
+    if (!st.companyName) errors.push('請填公司名稱');
+    if (st.taxId && !isValidTaxId_(st.taxId)) errors.push('統一編號檢查碼不正確');
+    if (VAT_TYPES.indexOf(st.vatType) < 0) errors.push('營業稅類型需為「一般稅額」「小規模」或「免稅」');
+    if (!(st.fyStartMonth >= 1 && st.fyStartMonth <= 12)) errors.push('會計年度起始月需為 1～12');
+    if (st.openingDate && !isValidDate_(st.openingDate)) errors.push('開帳日格式需為 yyyy-MM-dd');
+    if (!st.industries.length) st.industries = ['通用'];
+    var old = loadSettings_();
+    if (old.openingDate && !st.openingDate && (loadOpening_().length || loadLines_().length)) {
+      errors.push('已有期初餘額或傳票，開帳日不能清空');
+    }
+    if (st.openingDate && st.openingDate !== old.openingDate) {
+      var earlier = loadLines_().filter(function (l) { return l.status !== '作廢' && l.date < st.openingDate; });
+      if (earlier.length) errors.push('已有早於 ' + st.openingDate + ' 的傳票（' + earlier[0].no + '），不能把開帳日改晚');
+    }
+    if (errors.length) throw new Error(errors.join('\n'));
+    saveSettings_(st);
+    // 公司名稱同步到集團的公司清單
+    if (CTX.company && st.companyName !== CTX.company.name) {
+      var row = loadCompanies_().filter(function (c) { return c.id === CTX.company.id; })[0];
+      if (row) updateCells_(SHEETS.COMPANIES, row._row, { '公司名稱': st.companyName });
+      CTX.company.name = st.companyName;
+    }
+    log_(s.username, '修改公司設定', st);
+    return st;
+  });
+};
+
+// ───────────── 帳號 ─────────────
+
+HANDLERS.resetPassword = function (p, s) {
+  var u = findUser_(p.username);
+  if (!u) throw new Error('帳號不存在');
+  var pw = randomPassword_();
+  setPassword_(u, pw);
+  log_(s.username, '重設密碼', u.username);
+  return { username: u.username, tempPassword: pw };
+};
+
+HANDLERS.changePassword = function (p, s) {
+  var u = findUser_(s.username);
+  if (!u || hashPassword_(u.salt, String(p.oldPassword || '')) !== u.hash) throw new Error('目前密碼不正確');
+  var err = validatePasswordStrength_(p.newPassword);
+  if (err) throw new Error(err);
+  setPassword_(u, p.newPassword);
+  log_(s.username, '變更密碼', '');
+  // 舊的登入（含其他裝置）全部失效，回傳新的登入憑證給目前這個畫面
+  return issueSession_(findUser_(s.username));
+};
+
+// ===== 45_Company.js =====
+/**
+ * 集團：公司清單、依公司的權限、新增公司、帳號管理、集團合併報表、傳票範本
+ */
+
+// ───────────── 公司與權限 ─────────────
+
+function loadCompanies_() {
+  return readObjects_(SHEETS.COMPANIES).map(function (o) {
+    return {
+      id: str_(o['公司代碼']), name: str_(o['公司名稱']), spreadsheetId: str_(o['試算表ID']),
+      enabled: str_(o['啟用']) !== '否', createdAt: str_(o['建立時間']), _row: o._row
+    };
+  }).filter(function (c) { return c.id && c.spreadsheetId; });
+}
+
+function loadAccess_() {
+  return readObjects_(SHEETS.ACCESS).map(function (o) {
+    return { username: str_(o['帳號']), companyId: str_(o['公司代碼']), role: str_(o['角色']), _row: o._row };
+  }).filter(function (a) { return a.username && a.companyId; });
+}
+
+/** 某人在某公司的角色；集團管理者在每家公司都是管理者 */
+function companyRoleOf_(session, companyId, access) {
+  if (session.groupRole === '管理者') return '管理者';
+  var key = session.username.toLowerCase();
+  var row = (access || loadAccess_()).filter(function (a) { return a.username.toLowerCase() === key && a.companyId === companyId; })[0];
+  return row && ROLES.indexOf(row.role) >= 0 ? row.role : null;
+}
+
+/** 這個人可以進入的公司（啟用中），依公司代碼排序 */
+function accessibleCompanies_(session) {
+  var access = session.groupRole === '管理者' ? [] : loadAccess_();
+  return loadCompanies_().filter(function (c) { return c.enabled; })
+    .sort(function (a, b) { return a.id < b.id ? -1 : 1; })
+    .map(function (c) { return { company: { id: c.id, name: c.name, spreadsheetId: c.spreadsheetId }, role: companyRoleOf_(session, c.id, access) }; })
+    .filter(function (x) { return x.role; });
+}
+
+function consolidatedCompanies_(session) {
+  return (session.companies || []).filter(function (x) { return CONSOLIDATED_ROLES.indexOf(x.role) >= 0; });
+}
+
+function nextCompanyId_(companies) {
+  var max = 0;
+  companies.forEach(function (c) { var n = Number(String(c.id).replace(/\D/g, '')); if (n > max) max = n; });
+  return 'C' + pad_(max + 1, 2);
+}
+
+/** 在目前 CTX 指到的公司試算表建立公司用的工作表與科目參考庫 */
+function initCompanySheets_(companyName) {
+  var ss = ss_();
+  COMPANY_SHEETS.forEach(function (name) { ensureSheet_(ss, name); });
+  replaceAll_(SHEETS.REF, referenceAccountObjects_().map(function (a) {
+    return {
+      '科目代碼': a.code, '科目名稱': a.name, '類別': a.category, '正常餘額': a.normal, '報表區塊': a.block,
+      '適用產業': a.industries, '盤點對應成本科目': a.stockCost, '說明': a.note
+    };
+  }));
+  var existing = {};
+  readObjects_(SHEETS.SETTINGS).forEach(function (o) { existing[str_(o['項目'])] = o; });
+  var missing = DEFAULT_SETTINGS.filter(function (d) { return !existing[d[0]]; });
+  appendObjects_(SHEETS.SETTINGS, missing.map(function (d) {
+    return { '項目': d[0], '值': d[0] === '公司名稱' ? (companyName || '') : d[1], '說明': d[2] };
+  }));
+  if (existing['公司名稱'] && !str_(existing['公司名稱']['值']) && companyName) updateCells_(SHEETS.SETTINGS, existing['公司名稱']._row, { '值': companyName });
+}
+
+// ───────────── 公司管理（集團管理者） ─────────────
+
+HANDLERS.listCompanies = function () {
+  return loadCompanies_().sort(function (a, b) { return a.id < b.id ? -1 : 1; }).map(function (c) {
+    var url = '';
+    try { url = 'https://docs.google.com/spreadsheets/d/' + c.spreadsheetId + '/edit'; } catch (e) { url = ''; }
+    return { id: c.id, name: c.name, enabled: c.enabled, createdAt: c.createdAt, url: url, isHub: c.spreadsheetId === hubSs_().getId() };
+  });
+};
+
+HANDLERS.createCompany = function (p, s) {
+  return withLock_(function () {
+    var name = str_(p.name);
+    if (!name) throw new Error('請填公司名稱');
+    var companies = loadCompanies_();
+    if (companies.some(function (c) { return c.name === name; })) throw new Error('已經有「' + name + '」');
+    var industries = (p.industries || []).filter(function (i) { return INDUSTRIES.indexOf(i) >= 0; });
+    var newSs = SpreadsheetApp.create(name + '｜會計帳');
+    // 放到集團主檔所在的資料夾
+    try {
+      var parents = DriveApp.getFileById(hubSs_().getId()).getParents();
+      if (parents.hasNext()) DriveApp.getFileById(newSs.getId()).moveTo(parents.next());
+    } catch (e) { /* 移動失敗時留在雲端硬碟根目錄 */ }
+    var id = nextCompanyId_(companies);
+    appendObjects_(SHEETS.COMPANIES, [{ '公司代碼': id, '公司名稱': name, '試算表ID': newSs.getId(), '啟用': '是', '建立時間': nowText_() }]);
+    var prev = CTX.company;
+    CTX.company = { id: id, name: name, spreadsheetId: newSs.getId() };
+    CTX.ssCache[newSs.getId()] = newSs;
+    try {
+      initCompanySheets_(name);
+      // 移除新試算表預設的空白工作表
+      newSs.getSheets().forEach(function (sh) { if (!HEADERS[sh.getName()] && newSs.getSheets().length > 1) newSs.deleteSheet(sh); });
+      var st = loadSettings_();
+      st.companyName = name;
+      st.taxId = str_(p.taxId);
+      st.industries = industries.length ? industries : ['通用'];
+      if (VAT_TYPES.indexOf(p.vatType) >= 0) st.vatType = p.vatType;
+      saveSettings_(st);
+      if (p.addAccounts !== false) addReferenceAccounts_(referenceCodesFor_(st.industries), s);
+      log_(s.username, '新增公司', id + ' ' + name);
+    } finally {
+      CTX.company = prev;
+    }
+    return { id: id, name: name, url: 'https://docs.google.com/spreadsheets/d/' + newSs.getId() + '/edit' };
+  });
+};
+
+HANDLERS.saveCompany = function (p, s) {
+  return withLock_(function () {
+    var companies = loadCompanies_();
+    var c = companies.filter(function (x) { return x.id === p.id; })[0];
+    if (!c) throw new Error('公司不存在');
+    var name = str_(p.name) || c.name;
+    var enabled = p.enabled !== false;
+    if (!enabled && companies.filter(function (x) { return x.enabled && x.id !== c.id; }).length === 0) throw new Error('至少要保留一家啟用中的公司');
+    updateCells_(SHEETS.COMPANIES, c._row, { '公司名稱': name, '啟用': enabled ? '是' : '否' });
+    if (name !== c.name) {
+      var prev = CTX.company;
+      CTX.company = { id: c.id, name: name, spreadsheetId: c.spreadsheetId };
+      try {
+        var st = loadSettings_();
+        st.companyName = name;
+        saveSettings_(st);
+      } finally { CTX.company = prev; }
+    }
+    log_(s.username, '修改公司', c.id + ' ' + name + (enabled ? '' : '（停用）'));
+    return { id: c.id };
+  });
+};
+
+/** 系統名稱（登入畫面、瀏覽器分頁、試算表選單顯示的名稱），整個集團共用一個 */
+HANDLERS.saveAppName = function (p, s) {
+  var name = str_(p.name);
+  if (!name) throw new Error('請填系統名稱');
+  if (name.length > 30) throw new Error('系統名稱請在 30 個字以內');
+  if (/[<>]/.test(name)) throw new Error('系統名稱不能有 < 或 >');
+  var old = appName_();
+  setAppName_(name);
+  log_(s.username, '修改系統名稱', old + ' → ' + name);
+  return { name: name };
+};
+
+/** 依產業挑出參考庫科目代碼（含通用） */
+function referenceCodesFor_(industries) {
+  var wanted = (industries || []).concat(['通用']);
+  return loadReference_().filter(function (r) {
+    return r.industries.split(',').some(function (i) { return wanted.indexOf(str_(i)) >= 0; });
+  }).map(function (r) { return r.code; });
+}
+
+// ───────────── 帳號（集團管理者） ─────────────
+
+HANDLERS.listUsers = function () {
+  var companies = loadCompanies_();
+  var names = {};
+  companies.forEach(function (c) { names[c.id] = c.name; });
+  var access = loadAccess_();
+  return {
+    companies: companies.filter(function (c) { return c.enabled; }).map(function (c) { return { id: c.id, name: c.name }; }),
+    users: loadUsers_().map(function (u) {
+      var groupRole = u.role === '管理者' ? '管理者' : '成員';
+      return {
+        username: u.username, name: u.name, groupRole: groupRole, enabled: u.enabled, createdAt: u.createdAt, lastLogin: u.lastLogin,
+        access: groupRole === '管理者' ? [] : access.filter(function (a) { return a.username.toLowerCase() === u.username.toLowerCase(); })
+          .map(function (a) { return { companyId: a.companyId, companyName: names[a.companyId] || a.companyId, role: a.role }; })
+      };
+    })
+  };
+};
+
+/**
+ * 新增或修改帳號
+ * p = { isNew, username, name, groupRole: 管理者|成員, enabled, access: [{ companyId, role }] }
+ * 相容舊格式：p.role 為公司角色時，視為「成員」並只給目前這家公司該角色
+ */
+HANDLERS.saveUser = function (p, s) {
+  return withLock_(function () {
+    var groupRole = p.groupRole;
+    var access = p.access;
+    if (!groupRole && p.role) {
+      if (p.role === '管理者') groupRole = '管理者';
+      else { groupRole = '成員'; access = [{ companyId: CTX.company.id, role: p.role }]; }
+    }
+    if (GROUP_ROLES.indexOf(groupRole) < 0) throw new Error('身分不正確');
+    var companies = {};
+    loadCompanies_().forEach(function (c) { companies[c.id] = c; });
+    access = (groupRole === '成員' ? (access || []) : []).filter(function (a) { return a && a.role; });
+    access.forEach(function (a) {
+      if (!companies[a.companyId]) throw new Error('公司 ' + a.companyId + ' 不存在');
+      if (ROLES.indexOf(a.role) < 0) throw new Error('角色不正確：' + a.role);
+    });
+    if (groupRole === '成員' && !access.length && p.enabled !== false) throw new Error('一般成員至少要指派一家公司');
+
+    var username = str_(p.username);
+    var result = { username: username };
+    if (p.isNew) {
+      result.tempPassword = createUser_(username, p.name, groupRole);
+    } else {
+      var u = findUser_(username);
+      if (!u) throw new Error('帳號不存在');
+      username = u.username;
+      var admins = loadUsers_().filter(function (x) { return x.enabled && x.role === '管理者'; });
+      var losingAdmin = u.role === '管理者' && (groupRole !== '管理者' || p.enabled === false);
+      if (losingAdmin && admins.length <= 1) throw new Error('至少要保留一位啟用中的集團管理者');
+      if (u.username === s.username && losingAdmin) throw new Error('不能取消自己的集團管理者身分');
+      updateCells_(SHEETS.USERS, u._row, { '姓名': str_(p.name) || u.name, '角色': groupRole, '啟用': p.enabled === false ? '否' : '是' });
+    }
+    // 重寫此人的公司權限
+    var key = username.toLowerCase();
+    deleteRowNumbers_(SHEETS.ACCESS, loadAccess_().filter(function (a) { return a.username.toLowerCase() === key; }).map(function (a) { return a._row; }));
+    appendObjects_(SHEETS.ACCESS, access.map(function (a) { return { '帳號': username, '公司代碼': a.companyId, '角色': a.role }; }));
+    var desc = groupRole === '管理者' ? '集團管理者' : access.map(function (a) { return (companies[a.companyId] || {}).name + '：' + a.role; }).join('、');
+    log_(s.username, p.isNew ? '新增帳號' : '修改帳號', username + '（' + desc + '）' + (p.enabled === false ? '（停用）' : ''));
+    return result;
+  });
+};
+
+HANDLERS.listLog = function (p) {
+  var rows = readObjects_(SHEETS.LOG);
+  var limit = Math.min(Number(p.limit) || 200, 1000);
+  return rows.slice(-limit).reverse().map(function (o) {
+    return { time: str_(o['時間']), user: str_(o['帳號']), action: str_(o['動作']), detail: str_(o['內容']), company: str_(o['公司']) };
+  });
+};
+
+// ───────────── 集團合併報表 ─────────────
+
+/**
+ * p = { type: 'is' | 'bs', from, to, asOf }
+ * 每家公司各自計算（開帳日之前沒有資料的公司以空白呈現），再並排加總
+ */
+HANDLERS.consolidated = function (p, s) {
+  var list = consolidatedCompanies_(s);
+  if (list.length < 2) throw new Error('集團報表需要至少兩家您有「管理者」或「會計」權限的公司');
+  var type = p.type === 'bs' ? 'bs' : 'is';
+  var prev = CTX.company;
+  var items = [];
+  try {
+    list.forEach(function (x) {
+      CTX.company = x.company;
+      var item = { id: x.company.id, name: x.company.name, statement: null };
+      try {
+        var settings = loadSettings_();
+        if (type === 'bs') {
+          item.statement = balanceSheet_(loadAccounts_(), loadOpening_(), loadLines_(), asOfOf_(p.asOf), settings.fyStartMonth);
+        } else {
+          var r = rangeOf_(p);
+          item.statement = incomeStatement_(loadAccounts_(), loadLines_(), r.from, r.to);
+        }
+      } catch (e) {
+        item.note = e.message;
+      }
+      items.push(item);
+    });
+  } finally {
+    CTX.company = prev;
+  }
+  var merged = mergeStatements_(items);
+  merged.type = type;
+  merged.from = p.from; merged.to = p.to; merged.asOf = p.asOf;
+  return merged;
+};
+
+// ───────────── 傳票範本 ─────────────
+
+HANDLERS.voucherTemplates = function () {
+  var st = loadSettings_();
+  return templatesFor_(st.industries, loadAccounts_(), st.vatType);
+};
+
+// ===== 47_Docs.js =====
+/**
+ * 單據匣：上傳發票／收據照片 → 文字辨識（Google 雲端硬碟內建 OCR，免費）→ 規則整理 → 驗證 → 人工校正 → 入帳
+ * 也可匯入財政部「電子發票整合服務平台」下載的進項發票檔。
+ *
+ * 資料：
+ *   單據      — 每張單據一列：解析後的欄位、欄位來源、驗證結果、扣抵判定、狀態
+ *   單據原文  — OCR 原始文字（與解析結果分開，可用來重新解析）
+ *   原始檔案  — 部署者（業主）雲端硬碟：主檔所在資料夾／會計單據／<公司代碼 公司名稱>
+ *
+ * 入帳一律經過 postDocVoucher_ → saveVoucherCore_（借貸平衡、鎖帳、開帳日、科目啟用檢查），沒有其他捷徑。
+ * 文字辨識需要在 Apps Script「服務」加入 Drive API（appsscript.json 已設定，clasp 推送會自動加入）。
+ */
+var DOC_MAX_BYTES = 10 * 1024 * 1024;
+var DOC_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+var DOC_STATUS = { PENDING: '待處理', POSTED: '已入帳', SKIPPED: '略過', DUPLICATE: '重複' };
+var DOC_KINDS = ['統一發票（有統編）', '統一發票', '電子發票', '收據', '其他'];
+var DOC_BATCH_MAX = 20;
+var DOC_TEXT_CHUNK = 40000;
+/** 這些付款科目屬於轉帳傳票（沒有現金或存款進出） */
+var TRANSFER_PAY_CODES = ['2131', '2193', '1142'];
+
+function docsSheetReady_() {
+  var ss = ss_();
+  [SHEETS.DOCS, SHEETS.DOC_TEXT].forEach(function (n) { if (!ss.getSheetByName(n)) ensureSheet_(ss, n); });
+}
+
+function hasDocsSheet_() {
+  try { return !!ss_().getSheetByName(SHEETS.DOCS); } catch (e) { return false; }
+}
+
+function parseJson_(s, fallback) {
+  if (!s) return fallback;
+  try { var v = JSON.parse(s); return v === null || v === undefined ? fallback : v; } catch (e) { return fallback; }
+}
+
+function docFromObj_(o) {
+  var deductible = str_(o['扣抵判定']);
+  return {
+    id: str_(o['單據編號']), source: str_(o['來源']), kind: str_(o['種類']), status: str_(o['狀態']),
+    date: str_(o['日期']), invoiceNo: str_(o['發票號碼']), sellerName: str_(o['賣方名稱']),
+    sellerTaxId: str_(o['賣方統編']), buyerTaxId: str_(o['買方統編']),
+    net: toAmount_(o['未稅金額']) || 0, tax: toAmount_(o['稅額']) || 0, total: toAmount_(o['總金額']) || 0,
+    src: parseJson_(str_(o['欄位來源']), {}), level: str_(o['驗證等級']) || '正常', issues: parseJson_(str_(o['驗證結果']), []),
+    deductible: DEDUCT_STATES.indexOf(deductible) >= 0 ? deductible : '未判定', hint: str_(o['扣抵建議']),
+    suggest: str_(o['建議科目']), fileName: str_(o['檔名']), fileId: str_(o['檔案ID']),
+    voucherNo: str_(o['傳票號碼']), note: str_(o['備註']),
+    uploadedBy: str_(o['上傳者']), uploadedAt: str_(o['上傳時間']),
+    confirmedBy: str_(o['確認者']), confirmedAt: str_(o['確認時間']),
+    doneBy: str_(o['處理者']), doneAt: str_(o['處理時間']),
+    rev: Number(o['版本']) || 1, parserVersion: Number(o['解析版本']) || 0, _row: o._row
+  };
+}
+
+function docToObj_(d) {
+  return {
+    '單據編號': d.id, '來源': d.source, '種類': d.kind, '狀態': d.status, '日期': d.date,
+    '發票號碼': d.invoiceNo, '賣方名稱': d.sellerName, '賣方統編': d.sellerTaxId, '買方統編': d.buyerTaxId,
+    '未稅金額': d.net || 0, '稅額': d.tax || 0, '總金額': d.total || 0,
+    '欄位來源': JSON.stringify(d.src || {}), '驗證等級': d.level || '正常', '驗證結果': JSON.stringify(d.issues || []),
+    '扣抵判定': d.deductible || '未判定', '扣抵建議': d.hint || '', '建議科目': d.suggest || '',
+    '檔名': d.fileName || '', '檔案ID': d.fileId || '', '傳票號碼': d.voucherNo || '', '備註': d.note || '',
+    '上傳者': d.uploadedBy || '', '上傳時間': d.uploadedAt || '', '確認者': d.confirmedBy || '', '確認時間': d.confirmedAt || '',
+    '處理者': d.doneBy || '', '處理時間': d.doneAt || '', '版本': d.rev || 1, '解析版本': d.parserVersion || 0
+  };
+}
+
+function loadDocs_() {
+  if (!hasDocsSheet_()) return [];
+  return readObjects_(SHEETS.DOCS).map(docFromObj_).filter(function (d) { return d.id; });
+}
+
+function findDoc_(id) {
+  var d = loadDocs_().filter(function (x) { return x.id === str_(id); })[0];
+  if (!d) throw new Error('找不到單據 ' + id);
+  return d;
+}
+
+function saveDoc_(d) {
+  updateRow_(SHEETS.DOCS, d._row, docToObj_(d));
+}
+
+/** OCR 原文另存：太長的文字切成多列 */
+function saveDocText_(id, engine, text) {
+  var t = String(text || '');
+  var rows = [], now = nowText_();
+  for (var i = 0; i === 0 || i * DOC_TEXT_CHUNK < t.length; i++) {
+    rows.push({ '單據編號': id, '引擎': engine, '段落': i + 1, '原始文字': t.slice(i * DOC_TEXT_CHUNK, (i + 1) * DOC_TEXT_CHUNK), '擷取時間': now });
+  }
+  appendObjects_(SHEETS.DOC_TEXT, rows);
+}
+
+function loadDocText_(id) {
+  try { if (!ss_().getSheetByName(SHEETS.DOC_TEXT)) return ''; } catch (e) { return ''; }
+  return readObjects_(SHEETS.DOC_TEXT).filter(function (o) { return str_(o['單據編號']) === id; })
+    .sort(function (a, b) { return Number(a['段落']) - Number(b['段落']); })
+    .map(function (o) { return String(o['原始文字'] === undefined ? '' : o['原始文字']); }).join('');
+}
+
+/** 單據編號 D202611-0001（依上傳月份流水號） */
+function nextDocIds_(docs, count) {
+  var period = todayText_().slice(0, 7).replace('-', '');
+  var prefix = 'D' + period + '-';
+  var max = 0;
+  docs.forEach(function (d) { if (d.id.indexOf(prefix) === 0) { var n = Number(d.id.slice(prefix.length)); if (n > max) max = n; } });
+  var out = [];
+  for (var i = 1; i <= count; i++) out.push(prefix + pad_(max + i, 4));
+  return out;
+}
+
+/** 已啟用科目的對照表 */
+function enabledCodeMap_() {
+  var m = {};
+  loadAccounts_().forEach(function (a) { if (a.enabled) m[a.code] = a; });
+  return m;
+}
+
+/** 驗證需要的公司狀態（一次讀好，給多張單據共用） */
+function docCtx_(docs) {
+  var settings = loadSettings_();
+  return {
+    settings: settings, ownTaxId: settings.taxId, openingDate: settings.openingDate,
+    lockedPeriods: lockedPeriodsMap_(), today: todayText_(), index: buildDocIndex_(docs)
+  };
+}
+
+function checkDoc_(d, ctx) {
+  d.issues = validateDoc_(d, ctx);
+  d.level = docLevel_(d.issues);
+  return d;
+}
+
+function hintText_(d, settings, expense) {
+  var h = deductibleHint_(d, settings, expense);
+  return '建議' + h.suggest + '：' + h.reason;
+}
+
+/** 給畫面用的單據資料（清單不帶原文，避免太大） */
+function docView_(d, ctx, enabled) {
+  var suggest = enabled[d.suggest] ? d.suggest : suggestExpense_(d.sellerName, ctx.settings.industries, enabled);
+  var hint = deductibleHint_(d, ctx.settings, suggest);
+  return {
+    id: d.id, source: d.source, kind: d.kind, status: d.status, date: d.date, invoiceNo: d.invoiceNo,
+    sellerName: d.sellerName, sellerTaxId: d.sellerTaxId, buyerTaxId: d.buyerTaxId,
+    net: d.net, tax: d.tax, total: d.total, src: d.src, level: d.level, issues: d.issues,
+    deductible: d.deductible, hintSuggest: hint.suggest, hintReason: hint.reason, suggest: suggest,
+    fileName: d.fileName, hasFile: !!d.fileId, voucherNo: d.voucherNo, note: d.note,
+    uploadedBy: d.uploadedBy, uploadedAt: d.uploadedAt, confirmedBy: d.confirmedBy, confirmedAt: d.confirmedAt,
+    doneBy: d.doneBy, doneAt: d.doneAt, rev: d.rev,
+    open: d.status === DOC_STATUS.PENDING || d.status === DOC_STATUS.DUPLICATE
+  };
+}
+
+function payAccounts_(enabled) {
+  return PAY_ACCOUNTS.filter(function (x) { return enabled[x[0]]; }).map(function (x) { return { code: x[0], label: x[1] }; });
+}
+
+/** 單據放在哪個雲端硬碟資料夾：主檔所在資料夾／會計單據／C01 公司名稱 */
+function docFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var key = 'DOC_FOLDER_' + (CTX.company ? CTX.company.id : 'MAIN');
+  var id = props.getProperty(key);
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* 資料夾被刪除：重建 */ } }
+  var parents = DriveApp.getFileById(hubSs_().getId()).getParents();
+  var base = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
+  var root = childFolder_(base, '會計單據');
+  var name = CTX.company ? CTX.company.id + ' ' + CTX.company.name : '主檔';
+  var folder = childFolder_(root, name);
+  props.setProperty(key, folder.getId());
+  return folder;
+}
+
+function childFolder_(parent, name) {
+  var it = parent.getFoldersByName(name);
+  return it.hasNext() ? it.next() : parent.createFolder(name);
+}
+
+/** Google 雲端硬碟內建文字辨識：圖片或 PDF 轉成 Google 文件時順便讀出文字，讀完刪除暫存文件 */
+function ocrBlob_(blob) {
+  if (typeof Drive === 'undefined' || !Drive.Files) return { text: '', error: '尚未啟用文字辨識（Apps Script「服務」需加入 Drive API），請手動輸入內容' };
+  var tmp = null;
+  try {
+    var meta = { name: 'OCR暫存_' + blob.getName(), mimeType: 'application/vnd.google-apps.document' };
+    // Drive API v3 的語言提示只接受 ISO 639-1 兩碼（zh），寫 zh-TW 會被拒絕「Invalid Value」；
+    // 萬一還是被拒，就不帶提示讓 Google 自動判斷
+    try { tmp = Drive.Files.create(meta, blob, { ocrLanguage: 'zh' }); }
+    catch (e1) { tmp = Drive.Files.create(meta, blob); }
+    return { text: DocumentApp.openById(tmp.id).getBody().getText(), error: '' };
+  } catch (e) {
+    return { text: '', error: '文字辨識失敗（' + e.message + '），請手動輸入內容' };
+  } finally {
+    if (tmp && tmp.id) { try { Drive.Files.remove(tmp.id); } catch (e2) { try { DriveApp.getFileById(tmp.id).setTrashed(true); } catch (e3) { /* 忽略 */ } } }
+  }
+}
+
+/** OCR 結果好不好：失敗、文字太少或讀不到金額日期 */
+function ocrState_(ocr, parsed) {
+  if (ocr.error) return 'failed';
+  if (String(ocr.text).replace(/\s/g, '').length < 20 || (!parsed.total && !parsed.date)) return 'weak';
+  return 'ok';
+}
+
+/** 同一張發票是否已經有了（不含已略過的） */
+function duplicateOf_(docs, invoiceNo) {
+  if (!invoiceNo) return null;
+  return docs.filter(function (d) { return d.invoiceNo === invoiceNo && d.status !== DOC_STATUS.SKIPPED; })[0] || null;
+}
+
+// ───────────── API：查詢 ─────────────
+
+/** 分頁：待處理（含重複）、異常（待處理中有錯誤或警示）、已入帳、略過、全部 */
+HANDLERS.listDocs = function (p) {
+  var tab = str_(p.status) || '待處理';
+  var kw = str_(p.keyword).toLowerCase();
+  var enabled = enabledCodeMap_();
+  var docs = loadDocs_();
+  var ctx = docCtx_(docs);
+  docs.forEach(function (d) { checkDoc_(d, ctx); });
+  var isOpen = function (d) { return d.status === DOC_STATUS.PENDING || d.status === DOC_STATUS.DUPLICATE; };
+  var isBad = function (d) { return isOpen(d) && (d.level === '錯誤' || d.level === '警示'); };
+  var counts = { '待處理': 0, '異常': 0, '已入帳': 0, '略過': 0 };
+  docs.forEach(function (d) {
+    if (isOpen(d)) counts['待處理']++;
+    if (isBad(d)) counts['異常']++;
+    if (d.status === DOC_STATUS.POSTED) counts['已入帳']++;
+    if (d.status === DOC_STATUS.SKIPPED) counts['略過']++;
+  });
+  var list = docs.filter(function (d) {
+    if (tab === '待處理' && !isOpen(d)) return false;
+    if (tab === '異常' && !isBad(d)) return false;
+    if ((tab === '已入帳' || tab === '略過') && d.status !== tab) return false;
+    if (kw && [d.id, d.invoiceNo, d.sellerName, d.sellerTaxId, d.voucherNo, d.fileName, d.note].join(' ').toLowerCase().indexOf(kw) < 0) return false;
+    return true;
+  }).reverse().slice(0, 300).map(function (d) { return docView_(d, ctx, enabled); });
+  return { status: tab, counts: counts, docs: list, payAccounts: payAccounts_(enabled), kinds: DOC_KINDS, batchMax: DOC_BATCH_MAX };
+};
+
+/** 一張單據的完整資料（含 OCR 原文）；帶 expense、pay 時一併回傳建議分錄 */
+HANDLERS.getDoc = function (p) {
+  var docs = loadDocs_();
+  var d = docs.filter(function (x) { return x.id === str_(p.id); })[0];
+  if (!d) throw new Error('找不到單據 ' + p.id);
+  var ctx = docCtx_(docs);
+  var enabled = enabledCodeMap_();
+  checkDoc_(d, ctx);
+  var v = docView_(d, ctx, enabled);
+  v.text = loadDocText_(d.id);
+  v.item = itemNameOf_(v.text);
+  v.payAccounts = payAccounts_(enabled);
+  v.kinds = DOC_KINDS;
+  if (p.expense && p.pay) {
+    var deductible = DEDUCT_STATES.indexOf(str_(p.deductible)) >= 0 ? str_(p.deductible) : d.deductible;
+    v.lines = docToLines_({ total: d.total, tax: d.tax, sellerName: d.sellerName, deductible: deductible }, str_(p.expense), str_(p.pay), enabled);
+    v.voucherType = TRANSFER_PAY_CODES.indexOf(str_(p.pay)) >= 0 ? '轉帳' : '支出';
+    v.memo = docMemo_(d, v.item);
+  }
+  return v;
+};
+
+/** 讀單據原始檔：圖片直接回傳；PDF 回傳第一頁縮圖＋原檔 */
+HANDLERS.docFile = function (p) {
+  var d = findDoc_(p.id);
+  if (!d.fileId) throw new Error('這張單據是財政部匯入，沒有原始檔');
+  var file = DriveApp.getFileById(d.fileId);
+  var blob = file.getBlob();
+  var type = blob.getContentType();
+  var out = { id: d.id, name: d.fileName, mimeType: type };
+  if (type === 'application/pdf') {
+    out.pdf = Utilities.base64Encode(blob.getBytes());
+    try { var th = file.getThumbnail(); out.image = 'data:' + th.getContentType() + ';base64,' + Utilities.base64Encode(th.getBytes()); } catch (e) { out.image = ''; }
+  } else {
+    out.image = 'data:' + type + ';base64,' + Utilities.base64Encode(blob.getBytes());
+  }
+  return out;
+};
+
+// ───────────── API：建立 ─────────────
+
+/** 上傳一張單據（前端一次送一個檔案，圖片已在手機上壓縮） */
+HANDLERS.uploadDoc = function (p, s) {
+  var name = str_(p.name).replace(/[\\\/:*?"<>|]/g, '_').slice(0, 80) || '單據';
+  var type = str_(p.mimeType).toLowerCase();
+  if (DOC_TYPES.indexOf(type) < 0) throw new Error('「' + name + '」格式不支援，請上傳 JPG、PNG 照片或 PDF');
+  var bytes = Utilities.base64Decode(str_(p.data));
+  if (!bytes.length) throw new Error('「' + name + '」是空的檔案');
+  if (bytes.length > DOC_MAX_BYTES) throw new Error('「' + name + '」超過 10MB，請拍小一點或分開上傳');
+
+  docsSheetReady_();
+  var settings = loadSettings_();
+  var stamp = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyyMMdd-HHmmss');
+  var blob = Utilities.newBlob(bytes, type, stamp + '_' + name);
+  var file = docFolder_().createFile(blob);
+
+  // 文字辨識需要幾秒，放在鎖外面，避免卡住其他人
+  var ocr = ocrBlob_(blob);
+  var parsed = parseReceiptText_(ocr.text, { taxId: settings.taxId, name: settings.companyName });
+  parsed.src._ocr = ocrState_(ocr, parsed);
+  var suggest = suggestExpense_(parsed.sellerName + '\n' + ocr.text, settings.industries, enabledCodeMap_());
+
+  return withLock_(function () {
+    var docs = loadDocs_();
+    var dup = duplicateOf_(docs, parsed.invoiceNo);
+    var d = {
+      id: nextDocIds_(docs, 1)[0], source: '拍照上傳', kind: parsed.kind,
+      status: dup ? DOC_STATUS.DUPLICATE : DOC_STATUS.PENDING,
+      date: parsed.date, invoiceNo: parsed.invoiceNo, sellerName: parsed.sellerName,
+      sellerTaxId: parsed.sellerTaxId, buyerTaxId: parsed.buyerTaxId,
+      net: parsed.net, tax: parsed.tax, total: parsed.total, src: parsed.src,
+      deductible: '未判定', suggest: suggest, fileName: name, fileId: file.getId(),
+      note: dup ? '與 ' + dup.id + ' 的發票號碼相同' : ocr.error,
+      uploadedBy: s.username, uploadedAt: nowText_(), rev: 1, parserVersion: PARSER_VERSION
+    };
+    d.hint = hintText_(d, settings, suggest);
+    checkDoc_(d, docCtx_(docs.concat([d])));
+    appendObjects_(SHEETS.DOCS, [docToObj_(d)]);
+    saveDocText_(d.id, 'Google 雲端硬碟 OCR', ocr.text);
+    log_(s.username, '上傳單據', d.id + ' ' + name + (d.total ? ' 金額 ' + d.total : ''));
+    return { id: d.id, status: d.status, level: d.level, kind: d.kind, date: d.date, total: d.total, sellerName: d.sellerName, note: d.note };
+  });
+};
+
+/** 匯入財政部進項發票檔（前端讀成文字後送來） */
+/**
+ * 匯入前確認這是「本公司的進項發票」：
+ * - 賣方是本公司 → 是銷項（自己開出去的），不能當進貨；整份都是就擋下，混在一起的略過
+ * - 買方都不是本公司 → 多半是選錯公司，擋下並提醒切換
+ */
+function checkInvoiceOwner_(parsed, ownTaxId, ownName) {
+  if (!ownTaxId) return;
+  var sales = parsed.rows.filter(function (r) { return r.sellerTaxId === ownTaxId; });
+  if (sales.length === parsed.rows.length) {
+    throw new Error('這是「銷項」發票檔：檔案裡的發票都是' + (ownName || '本公司') + '（' + ownTaxId + '）開給客人的，不是廠商開給你們的進項發票，所以不能匯入。' +
+      '請到財政部網站下載「進項」發票檔（檔名通常含 _IN_）。');
+  }
+  if (sales.length) {
+    parsed.rows = parsed.rows.filter(function (r) { return r.sellerTaxId !== ownTaxId; });
+    sales.forEach(function (r) { parsed.skipped.push(r.invoiceNo + ' 是本公司開出的銷項發票'); });
+  }
+  var withBuyer = parsed.rows.filter(function (r) { return r.buyerTaxId; });
+  var mine = withBuyer.filter(function (r) { return r.buyerTaxId === ownTaxId; });
+  if (withBuyer.length && !mine.length) {
+    throw new Error('這個檔案的買方統編是 ' + withBuyer[0].buyerTaxId + '，不是目前這家公司（' + (ownName || '') + '，' + ownTaxId + '）。' +
+      '請先在右上角切換到統編 ' + withBuyer[0].buyerTaxId + ' 的公司再匯入；若公司設定的統編填錯，請先到「公司設定」修正。');
+  }
+}
+
+HANDLERS.importInvoices = function (p, s) {
+  var parsed = parseInvoiceCsv_(str_(p.text));
+  if (!parsed.rows.length) throw new Error('檔案中沒有可匯入的發票' + (parsed.skipped.length ? '：\n' + parsed.skipped.slice(0, 5).join('\n') : ''));
+  docsSheetReady_();
+  var settings = loadSettings_();
+  var enabled = enabledCodeMap_();
+  checkInvoiceOwner_(parsed, str_(settings.taxId), str_(settings.companyName));
+  return withLock_(function () {
+    var docs = loadDocs_();
+    var seen = {};
+    var fresh = [], dups = [];
+    parsed.rows.forEach(function (r) {
+      if (seen[r.invoiceNo] || duplicateOf_(docs, r.invoiceNo)) { dups.push(r.invoiceNo); return; }
+      seen[r.invoiceNo] = true;
+      fresh.push(r);
+    });
+    var ids = nextDocIds_(docs, fresh.length);
+    var now = nowText_();
+    var made = fresh.map(function (r, i) {
+      var src = { invoiceNo: '匯入', date: '匯入', sellerName: '匯入', sellerTaxId: '匯入', buyerTaxId: '匯入', net: '匯入', tax: '匯入', total: '匯入' };
+      // 進項發票檔本來就是本公司的進項；檔案沒有買方欄時以本公司統編補上，並標示推算
+      if (!r.buyerTaxId) src.buyerTaxId = '推算';
+      var suggest = suggestExpense_(r.sellerName + '\n' + (r.items || ''), settings.industries, enabled);
+      var d = {
+        id: ids[i], source: '財政部匯入', kind: '電子發票', status: DOC_STATUS.PENDING,
+        date: r.date, invoiceNo: r.invoiceNo, sellerName: r.sellerName, sellerTaxId: r.sellerTaxId, buyerTaxId: r.buyerTaxId || settings.taxId,
+        net: r.net, tax: r.tax, total: r.total, src: src, deductible: '未判定', suggest: suggest,
+        fileName: str_(p.fileName).slice(0, 80), uploadedBy: s.username, uploadedAt: now, rev: 1, parserVersion: PARSER_VERSION
+      };
+      d.hint = hintText_(d, settings, suggest);
+      return d;
+    });
+    var ctx = docCtx_(docs.concat(made));
+    appendObjects_(SHEETS.DOCS, made.map(function (d) { return docToObj_(checkDoc_(d, ctx)); }));
+    // 財政部檔有品項明細（D 列）時，把品名存成原文，傳票摘要就能寫「買了什麼」
+    var texts = [];
+    fresh.forEach(function (r, i) { if (r.items) texts.push({ '單據編號': made[i].id, '引擎': '財政部匯入', '段落': 1, '原始文字': '品名：' + r.items, '擷取時間': now }); });
+    if (texts.length) appendObjects_(SHEETS.DOC_TEXT, texts);
+    log_(s.username, '匯入進項發票', str_(p.fileName) + '：新增 ' + made.length + ' 張，重複 ' + dups.length + ' 張，略過 ' + parsed.skipped.length + ' 列');
+    return { added: made.length, duplicates: dups, skipped: parsed.skipped };
+  });
+};
+
+// ───────────── API：人工校正 ─────────────
+
+function openDocOrThrow_(d) {
+  if (d.status === DOC_STATUS.POSTED) throw new Error('單據 ' + d.id + ' 已入帳（傳票 ' + d.voucherNo + '），不能修改；需要修改請先作廢傳票');
+  if (d.status === DOC_STATUS.SKIPPED) throw new Error('單據 ' + d.id + ' 已略過，請先改回待處理');
+}
+
+/** 檢查並整理人工輸入的欄位；格式不對直接拒絕（統編檢查碼不對只警示，不拒絕） */
+function cleanDocFields_(f, enabled) {
+  var out = {}, errors = [];
+  var has = function (k) { return Object.prototype.hasOwnProperty.call(f, k); };
+  if (has('kind')) { if (DOC_KINDS.indexOf(str_(f.kind)) < 0) errors.push('種類不正確'); else out.kind = str_(f.kind); }
+  if (has('date')) { var dt = str_(f.date); if (dt && !isValidDate_(dt)) errors.push('日期格式需為 yyyy-MM-dd'); else out.date = dt; }
+  if (has('invoiceNo')) { var no = str_(f.invoiceNo).toUpperCase().replace(/[\s\-－]/g, ''); if (no && !/^[A-Z]{2}\d{8}$/.test(no)) errors.push('發票號碼需為 2 個英文字母＋8 碼數字'); else out.invoiceNo = no; }
+  if (has('sellerName')) out.sellerName = str_(f.sellerName).slice(0, 60);
+  ['sellerTaxId', 'buyerTaxId'].forEach(function (k) {
+    if (!has(k)) return;
+    var v = str_(f[k]);
+    if (v && !/^\d{8}$/.test(v)) errors.push(DOC_FIELD_NAMES[k] + '需為 8 碼數字'); else out[k] = v;
+  });
+  ['net', 'tax', 'total'].forEach(function (k) {
+    if (!has(k)) return;
+    var n = toAmount_(f[k]);
+    if (isNaN(n) || n < 0 || Math.round(n) !== n) errors.push(DOC_FIELD_NAMES[k] + '需為 0 以上的整數'); else out[k] = n;
+  });
+  if (has('deductible')) { if (DEDUCT_STATES.indexOf(str_(f.deductible)) < 0) errors.push('扣抵判定不正確'); else out.deductible = str_(f.deductible); }
+  if (has('suggest')) { var c = str_(f.suggest); if (c && !enabled[c]) errors.push('科目 ' + c + ' 不存在或已停用'); else out.suggest = c; }
+  if (errors.length) throw new Error(errors.join('\n'));
+  return out;
+}
+
+/** 人工修改辨識欄位：改過的欄位標記「人工」，重新驗證；版本不同（別人剛改過）會被拒絕 */
+HANDLERS.updateDoc = function (p, s) {
+  return withLock_(function () {
+    var docs = loadDocs_();
+    var d = docs.filter(function (x) { return x.id === str_(p.id); })[0];
+    if (!d) throw new Error('找不到單據 ' + p.id);
+    openDocOrThrow_(d);
+    if (Number(p.rev) !== d.rev) throw new Error('這張單據剛被其他人修改過，請重新開啟後再改');
+    var enabled = enabledCodeMap_();
+    var f = cleanDocFields_(p.fields || {}, enabled);
+    var changes = [];
+    DOC_FIELDS.concat(['deductible', 'suggest']).forEach(function (k) {
+      if (!Object.prototype.hasOwnProperty.call(f, k) || String(f[k]) === String(d[k])) return;
+      changes.push((DOC_FIELD_NAMES[k] || (k === 'deductible' ? '扣抵判定' : '科目')) + '：' + (d[k] === '' ? '（空）' : d[k]) + ' → ' + (f[k] === '' ? '（空）' : f[k]));
+      d[k] = f[k];
+      d.src[k] = '人工'; // 科目也記來源：重新解析不會蓋掉人工選的科目
+    });
+    var settings = loadSettings_();
+    d.hint = hintText_(d, settings, d.suggest);
+    if (changes.length || p.confirm) { d.confirmedBy = s.username; d.confirmedAt = nowText_(); }
+    d.rev += 1;
+    var ctx = docCtx_(docs);
+    checkDoc_(d, ctx);
+    saveDoc_(d);
+    if (changes.length) log_(s.username, '修改單據', d.id + '：' + changes.join('；'));
+    return docView_(d, ctx, enabled);
+  });
+};
+
+/** 用保存的 OCR 原文重跑解析規則；人工改過的欄位不會被覆蓋 */
+HANDLERS.reparseDoc = function (p, s) {
+  return withLock_(function () {
+    var docs = loadDocs_();
+    var d = docs.filter(function (x) { return x.id === str_(p.id); })[0];
+    if (!d) throw new Error('找不到單據 ' + p.id);
+    openDocOrThrow_(d);
+    if (d.source !== '拍照上傳') throw new Error('只有拍照上傳的單據可以重新解析');
+    var settings = loadSettings_();
+    var parsed = parseReceiptText_(loadDocText_(d.id), { taxId: settings.taxId, name: settings.companyName });
+    var kept = [];
+    DOC_FIELDS.forEach(function (k) {
+      if (d.src[k] === '人工') { kept.push(DOC_FIELD_NAMES[k]); return; }
+      d[k] = parsed[k];
+      if (parsed.src[k]) d.src[k] = parsed.src[k]; else delete d.src[k];
+    });
+    d.parserVersion = PARSER_VERSION;
+    // 原本只是「雜費／消耗品」這種找不到規則的預設科目時，依新規則重新建議
+    if (d.src.suggest !== '人工' && (!d.suggest || d.suggest === '6399' || d.suggest === '6361')) {
+      var re = suggestExpense_(d.sellerName + '\n' + loadDocText_(d.id), settings.industries, enabledCodeMap_());
+      if (re) d.suggest = re;
+    }
+    d.rev += 1;
+    d.hint = hintText_(d, settings, d.suggest);
+    var ctx = docCtx_(docs);
+    checkDoc_(d, ctx);
+    saveDoc_(d);
+    log_(s.username, '重新解析單據', d.id + (kept.length ? '（保留人工欄位：' + kept.join('、') + '）' : ''));
+    return docView_(d, ctx, enabledCodeMap_());
+  });
+};
+
+HANDLERS.skipDoc = function (p, s) {
+  return withLock_(function () {
+    var d = findDoc_(p.id);
+    if (d.status === DOC_STATUS.POSTED) throw new Error('此單據已入帳（傳票 ' + d.voucherNo + '），請先作廢傳票');
+    var reason = str_(p.reason);
+    if (!reason) throw new Error('請填寫略過原因');
+    d.status = DOC_STATUS.SKIPPED; d.note = reason; d.doneBy = s.username; d.doneAt = nowText_(); d.rev += 1;
+    saveDoc_(d);
+    log_(s.username, '略過單據', d.id + '：' + reason);
+    return { id: d.id };
+  });
+};
+
+/** 略過或重複 → 待處理。必填原因；就算改回待處理，同號發票已入帳時仍然不能入帳（DUP_POSTED） */
+HANDLERS.restoreDoc = function (p, s) {
+  return withLock_(function () {
+    var d = findDoc_(p.id);
+    if (d.status !== DOC_STATUS.SKIPPED && d.status !== DOC_STATUS.DUPLICATE) throw new Error('只有「略過」或「重複」的單據可以改回待處理');
+    var reason = str_(p.reason);
+    if (!reason) throw new Error('請填寫改回待處理的原因');
+    d.status = DOC_STATUS.PENDING; d.note = '改回待處理：' + reason; d.doneBy = s.username; d.doneAt = nowText_(); d.rev += 1;
+    saveDoc_(d);
+    log_(s.username, '單據改回待處理', d.id + '：' + reason);
+    return { id: d.id };
+  });
+};
+
+// ───────────── 入帳 ─────────────
+
+/**
+ * 單據入帳的唯一入口（呼叫端必須已取得鎖）。
+ * 重新讀取並驗證 → 有「錯誤」不能入帳 → 有「警示」須已核對 → 扣抵須人工判定 → 組分錄 → saveVoucherCore_ → 標記已入帳
+ * p = { docId, rev, expense, pay, deductible, ackWarnings: [核對過的警示 key], lines?, date?, type?, memo? }
+ *   rev：畫面核對時的版本；單據之後被別人改過（版本不同）就拒絕，避免用沒看過的資料入帳
+ *   ackWarnings：畫面上顯示並勾選核對的警示 key；目前的警示只要有一項不在清單內就拒絕
+ *   lines 有給（傳票編輯器自己改過分錄）就用畫面的分錄，否則由伺服器依單據組分錄
+ */
+function postDocVoucher_(p, s) {
+  var docs = loadDocs_();
+  var d = docs.filter(function (x) { return x.id === str_(p.docId); })[0];
+  if (!d) throw new Error('找不到單據 ' + p.docId);
+  if (d.status === DOC_STATUS.POSTED) throw new Error('單據 ' + d.id + ' 已經入帳（傳票 ' + d.voucherNo + '）');
+  if (d.status === DOC_STATUS.SKIPPED) throw new Error('單據 ' + d.id + ' 已略過，請先改回待處理');
+  if (Number(p.rev) !== d.rev) throw new Error(d.id + ' 在你核對之後被修改過（版本 ' + p.rev + ' → ' + d.rev + '），請重新開啟核對後再入帳');
+  checkDoc_(d, docCtx_(docs));
+  var errs = d.issues.filter(function (i) { return i.level === '錯誤'; });
+  if (errs.length) throw new Error(d.id + ' 不能入帳：' + errs.map(function (i) { return i.msg; }).join('；'));
+  var acked = Array.isArray(p.ackWarnings) ? p.ackWarnings.map(String) : [];
+  var unacked = d.issues.filter(function (i) { return i.level === '警示' && acked.indexOf(i.key) < 0; });
+  if (unacked.length) throw new Error(d.id + ' 有 ' + unacked.length + ' 項警示尚未核對：' + unacked.map(function (i) { return i.msg; }).join('；'));
+  var deductible = str_(p.deductible) || d.deductible;
+  if (deductible !== '可扣抵' && deductible !== '不可扣抵') throw new Error(d.id + ' 請先判定進項稅額是否可扣抵');
+
+  var enabled = enabledCodeMap_();
+  var expense = str_(p.expense) || d.suggest;
+  var lines = p.lines, type = str_(p.type);
+  if (!lines || !lines.length) {
+    var pay = str_(p.pay);
+    if (!enabled[expense]) throw new Error(d.id + ' 請選擇費用科目');
+    if (!enabled[pay] || !PAY_ACCOUNTS.some(function (x) { return x[0] === pay; })) throw new Error(d.id + ' 請選擇付款方式');
+    lines = docToLines_({ total: d.total, tax: d.tax, sellerName: d.sellerName, deductible: deductible }, expense, pay, enabled);
+    if (!type) type = TRANSFER_PAY_CODES.indexOf(pay) >= 0 ? '轉帳' : '支出';
+  }
+  var r = saveVoucherCore_({ date: str_(p.date) || d.date, type: type || '支出', memo: str_(p.memo).slice(0, 100) || docMemo_(d, itemNameOf_(loadDocText_(d.id))), lines: lines, source: '單據' }, s);
+
+  var now = nowText_();
+  if (deductible !== d.deductible) d.src.deductible = '人工';
+  d.deductible = deductible;
+  if (enabled[expense]) d.suggest = expense;
+  d.status = DOC_STATUS.POSTED; d.voucherNo = r.no;
+  if (!d.confirmedBy) { d.confirmedBy = s.username; d.confirmedAt = now; }
+  d.doneBy = s.username; d.doneAt = now; d.rev += 1;
+  d.issues = d.issues.filter(function (i) { return i.level !== '提示'; });
+  d.level = docLevel_(d.issues);
+  saveDoc_(d);
+  log_(s.username, '單據入帳', d.id + ' → 傳票 ' + r.no + '（' + deductible + '）');
+  return { id: d.id, no: r.no, debit: r.debit };
+}
+
+/** 批次確認入帳：一張一張經過 postDocVoucher_，一張失敗不影響其他張 */
+HANDLERS.postDocs = function (p, s) {
+  var items = (p.items || []).filter(function (x) { return x && x.id; });
+  if (!items.length) throw new Error('請勾選要入帳的單據');
+  if (items.length > DOC_BATCH_MAX) throw new Error('一次最多 ' + DOC_BATCH_MAX + ' 張，請分批確認');
+  var results = items.map(function (it) {
+    try {
+      var r = withLock_(function () {
+        return postDocVoucher_({ docId: it.id, rev: it.rev, expense: it.expense, pay: it.pay, deductible: it.deductible, ackWarnings: it.ackWarnings, memo: it.memo }, s);
+      });
+      return { id: it.id, ok: true, no: r.no };
+    } catch (e) {
+      return { id: it.id, ok: false, error: e.message };
+    }
+  });
+  var ok = results.filter(function (r) { return r.ok; }).length;
+  log_(s.username, '批次入帳單據', '成功 ' + ok + ' 張，失敗 ' + (results.length - ok) + ' 張');
+  return { ok: ok, failed: results.length - ok, results: results };
+};
+
+/** 傳票作廢時：連結的單據改回待處理，可以重新入帳 */
+function releaseDocsOf_(voucherNo, s) {
+  loadDocs_().filter(function (d) { return d.voucherNo === voucherNo && d.status === DOC_STATUS.POSTED; }).forEach(function (d) {
+    d.status = DOC_STATUS.PENDING; d.voucherNo = ''; d.note = '傳票 ' + voucherNo + ' 已作廢';
+    d.doneBy = s.username; d.doneAt = nowText_(); d.rev += 1;
+    saveDoc_(d);
+  });
+}
+
+/** 傳票列表用：傳票號碼 → 單據 */
+function docsByVoucher_() {
+  var m = {};
+  loadDocs_().forEach(function (d) {
+    if (!d.voucherNo || d.status !== DOC_STATUS.POSTED) return;
+    (m[d.voucherNo] = m[d.voucherNo] || []).push({ id: d.id, name: d.fileName || d.invoiceNo, hasFile: !!d.fileId, invoiceNo: d.invoiceNo });
+  });
+  return m;
+}
+
+// ===== 50_Setup.js =====
+/**
+ * 初始設定與試算表選單
+ * 第一次使用：在 Apps Script 編輯器選 setup → 執行 → 授權，
+ * 再到「執行紀錄」看管理者帳號 admin 的臨時密碼。
+ */
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu(appName_())
+    .addItem('初始設定／更新科目參考庫', 'setup')
+    .addItem('更新本月報表到試算表', 'writeReportsThisMonth')
+    .addSeparator()
+    .addItem('重設 admin 密碼', 'resetAdminPassword')
+    .addToUi();
+}
+
+/**
+ * 安全防護：setup、重設密碼等管理函式只能由有權編輯試算表的人，
+ * 從試算表選單或 Apps Script 編輯器執行；網頁訪客（匿名）呼叫會被拒絕。
+ */
+function requireEditor_() {
+  var active = '', effective = '';
+  try { active = Session.getActiveUser().getEmail(); effective = Session.getEffectiveUser().getEmail(); } catch (e) { active = ''; }
+  // 網頁以部署者身分執行：訪客的 active 為空白或與部署者不同 → 拒絕
+  if (!active || active !== effective) throw new Error('此功能只能從試算表選單或 Apps Script 編輯器執行');
+  return active;
+}
+
+function setup() {
+  requireEditor_();
+  var hub = hubSs_();
+  CTX.company = null;
+  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', hub.getId());
+  HUB_SHEETS.forEach(function (name) { ensureSheet_(hub, name); });
+
+  // 第一次（或從單一公司版升級）：這份試算表本身就是第一家公司
+  if (!loadCompanies_().length) {
+    var firstName = '';
+    try {
+      var sh = hub.getSheetByName(SHEETS.SETTINGS);
+      if (sh) firstName = loadSettings_().companyName;
+    } catch (e) { firstName = ''; }
+    // 沒有公司設定時，以試算表檔名「公司名稱｜…」的前半段當作公司名稱
+    if (!firstName) { try { firstName = str_(hub.getName()).split('｜')[0]; } catch (e) { firstName = ''; } }
+    appendObjects_(SHEETS.COMPANIES, [{ '公司代碼': 'C01', '公司名稱': firstName || '公司一', '試算表ID': hub.getId(), '啟用': '是', '建立時間': nowText_() }]);
+  }
+
+  // 每家公司：補齊工作表、更新科目參考庫（公版更新時同步）
+  var notes = [];
+  loadCompanies_().forEach(function (c) {
+    CTX.company = { id: c.id, name: c.name, spreadsheetId: c.spreadsheetId };
+    CTX.ssCache = {};
+    try { initCompanySheets_(c.name); notes.push(c.id + ' ' + c.name + '：完成'); }
+    catch (e) { notes.push(c.id + ' ' + c.name + '：失敗（' + e.message + '）'); }
+  });
+  CTX.company = null;
+
+  // 舊版帳號升級：原本的「會計／助理」改成成員，並給第一家公司相同角色
+  var first = loadCompanies_()[0];
+  loadUsers_().forEach(function (u) {
+    if (u.role === '管理者' || u.role === '成員') return;
+    if (ROLES.indexOf(u.role) >= 0) appendObjects_(SHEETS.ACCESS, [{ '帳號': u.username, '公司代碼': first.id, '角色': u.role }]);
+    updateCells_(SHEETS.USERS, u._row, { '角色': '成員' });
+  });
+
+  [SHEETS.USERS, SHEETS.ACCESS, SHEETS.LOG].forEach(function (n) { hub.getSheetByName(n).hideSheet(); });
+
+  var msg = '初始設定完成。\n' + notes.join('\n');
+  if (!loadUsers_().length) {
+    var pw = createUser_('admin', '管理者', '管理者');
+    msg += '\n已建立集團管理者帳號 admin，臨時密碼：' + pw + '\n請登入後立即到「變更密碼」修改。';
+    log_('system', '初始設定', '建立 admin 帳號');
+  } else {
+    log_('system', '初始設定', '更新工作表與科目參考庫');
+  }
+  Logger.log(msg);
+  notify_(msg);
+}
+
+function ensureSheet_(ss, name) {
+  var sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  var headers = HEADERS[name];
+  if (sh.getMaxColumns() < headers.length) sh.insertColumnsAfter(sh.getMaxColumns(), headers.length - sh.getMaxColumns());
+  var head = sh.getRange(1, 1, 1, headers.length);
+  head.setValues([headers]);
+  head.setFontWeight('bold');
+  head.setBackground('#eef2f7');
+  sh.setFrozenRows(1);
+  (TEXT_COLUMNS[name] || []).forEach(function (h) {
+    var col = headers.indexOf(h) + 1;
+    if (col > 0) sh.getRange(2, col, sh.getMaxRows() - 1, 1).setNumberFormat('@');
+  });
+  return sh;
+}
+
+/** 選單：把本月損益、試算表與今日資產負債表寫入試算表 */
+function writeReportsThisMonth() {
+  requireEditor_();
+  var hubId = hubSs_().getId();
+  CTX.company = loadCompanies_().filter(function (c) { return c.spreadsheetId === hubId; })[0] || null;
+  var today = todayText_();
+  writeReportSheets_(monthStart_(today.slice(0, 7)), today, today);
+  log_('system', '寫入報表分頁', '選單執行');
+  notify_('已更新「報表_」三個分頁');
+}
+
+/** 忘記管理者密碼時使用：重設 admin 並在執行紀錄顯示新臨時密碼 */
+function resetAdminPassword() {
+  requireEditor_();
+  var u = findUser_('admin');
+  var msg;
+  if (!u) {
+    var pw0 = createUser_('admin', '管理者', '管理者');
+    msg = '已重新建立 admin，臨時密碼：' + pw0;
+  } else {
+    var pw = randomPassword_();
+    setPassword_(u, pw);
+    updateCells_(SHEETS.USERS, u._row, { '啟用': '是', '角色': '管理者' });
+    msg = 'admin 臨時密碼：' + pw;
+  }
+  log_('system', '重設 admin 密碼', '');
+  Logger.log(msg);
+  notify_(msg);
+}
+
+/**
+ * 管理函式執行完的通知：寫進執行記錄，並在試算表右下角跳出提示（不會擋住程式）。
+ * 不用 alert 對話框：從 Apps Script 編輯器執行時，alert 會在試算表分頁等人按「確定」，編輯器就一直轉圈。
+ */
+function notify_(msg) {
+  try { var ss = SpreadsheetApp.getActiveSpreadsheet(); if (ss && ss.toast) ss.toast(msg, APP.name, -1); } catch (e) { /* 沒有開著的試算表時只看執行記錄 */ }
+}
