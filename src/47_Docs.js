@@ -319,12 +319,37 @@ HANDLERS.uploadDoc = function (p, s) {
 };
 
 /** 匯入財政部進項發票檔（前端讀成文字後送來） */
+/**
+ * 匯入前確認這是「本公司的進項發票」：
+ * - 賣方是本公司 → 是銷項（自己開出去的），不能當進貨；整份都是就擋下，混在一起的略過
+ * - 買方都不是本公司 → 多半是選錯公司，擋下並提醒切換
+ */
+function checkInvoiceOwner_(parsed, ownTaxId, ownName) {
+  if (!ownTaxId) return;
+  var sales = parsed.rows.filter(function (r) { return r.sellerTaxId === ownTaxId; });
+  if (sales.length === parsed.rows.length) {
+    throw new Error('這是「銷項」發票檔：檔案裡的發票都是' + (ownName || '本公司') + '（' + ownTaxId + '）開給客人的，不是廠商開給你們的進項發票，所以不能匯入。' +
+      '請到財政部網站下載「進項」發票檔（檔名通常含 _IN_）。');
+  }
+  if (sales.length) {
+    parsed.rows = parsed.rows.filter(function (r) { return r.sellerTaxId !== ownTaxId; });
+    sales.forEach(function (r) { parsed.skipped.push(r.invoiceNo + ' 是本公司開出的銷項發票'); });
+  }
+  var withBuyer = parsed.rows.filter(function (r) { return r.buyerTaxId; });
+  var mine = withBuyer.filter(function (r) { return r.buyerTaxId === ownTaxId; });
+  if (withBuyer.length && !mine.length) {
+    throw new Error('這個檔案的買方統編是 ' + withBuyer[0].buyerTaxId + '，不是目前這家公司（' + (ownName || '') + '，' + ownTaxId + '）。' +
+      '請先在右上角切換到統編 ' + withBuyer[0].buyerTaxId + ' 的公司再匯入；若公司設定的統編填錯，請先到「公司設定」修正。');
+  }
+}
+
 HANDLERS.importInvoices = function (p, s) {
   var parsed = parseInvoiceCsv_(str_(p.text));
   if (!parsed.rows.length) throw new Error('檔案中沒有可匯入的發票' + (parsed.skipped.length ? '：\n' + parsed.skipped.slice(0, 5).join('\n') : ''));
   docsSheetReady_();
   var settings = loadSettings_();
   var enabled = enabledCodeMap_();
+  checkInvoiceOwner_(parsed, str_(settings.taxId), str_(settings.companyName));
   return withLock_(function () {
     var docs = loadDocs_();
     var seen = {};
