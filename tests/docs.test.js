@@ -314,6 +314,20 @@ test('財政部 M／D 格式：D 列當品名不當發票、統編補 0、作廢
   assert.equal(call('getVoucher', { no: post.results[0].no }).memo, '影印紙、原子筆、資料夾等 EJ17530002');
 });
 
+test('財政部匯入防呆：銷項檔擋下、選錯公司擋下、混入的銷項略過', () => {
+  const { call } = books(); // 本公司統編 OWN
+  const head = MOF_MD.split('\r\n').slice(0, 2).join('\r\n');
+  const m = (no, buyer, seller) => 'M,' + no + ',,35,開立已確認,2026-10-06 22:32:10,' + buyer + ',' + buyer + ',' + seller + ',某公司,2026-10-06,100,100,0,0,5,105,應稅,0,,,,,,,F0401,,,';
+  // 銷項：賣方是本公司
+  assert.throws(() => call('importInvoices', { text: head + '\r\n' + m('FN86350001', '0000000000', OWN) + '\r\n' + m('FN86350002', '22099131', OWN) }), /銷項.*_IN_/);
+  // 選錯公司：買方都是別家
+  assert.throws(() => call('importInvoices', { text: head + '\r\n' + m('FN86350003', '12345675', SELLER) }), /買方統編是 12345675.*切換/);
+  // 混在一起：銷項那張略過，進項照常匯入
+  const r = call('importInvoices', { text: head + '\r\n' + m('FN86350004', OWN, SELLER) + '\r\n' + m('FN86350005', '0000000000', OWN) });
+  assert.equal(r.added, 1);
+  assert.ok(r.skipped.some((x) => /FN86350005 是本公司開出的銷項發票/.test(x)), r.skipped.join('；'));
+});
+
 test('防重複入帳：同號發票只能入帳一次；改回待處理也擋得住；作廢後才能改入另一張', () => {
   const { call, upload } = books();
   const a = upload(HANDWRITTEN, 'a.jpg');
