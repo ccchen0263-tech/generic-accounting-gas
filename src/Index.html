@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>公版會計系統</title>
+  <title><?= appName ?></title>
   <?!= include('Css'); ?>
 </head>
 <body>
@@ -12,7 +12,7 @@
   <section id="login" class="login" hidden>
     <form id="loginForm" class="login-card" autocomplete="on">
       <div class="brand-mark" aria-hidden="true">帳</div>
-      <h1>公版會計系統</h1>
+      <h1><?= appName ?></h1>
       <p class="muted">請輸入帳號密碼登入</p>
       <label>帳號<input id="loginUser" name="username" autocomplete="username" required></label>
       <label>密碼<input id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
@@ -25,7 +25,7 @@
   <div id="app" class="app" hidden>
     <header class="topbar">
       <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="開啟選單" aria-expanded="false">☰</button>
-      <h1 id="companyTitle">公版會計系統</h1>
+      <h1 id="companyTitle"><?= appName ?></h1>
       <div class="co-switch" id="coWrap" hidden>
         <span class="co-dot" aria-hidden="true"></span>
         <select id="coSwitch" aria-label="切換公司"></select>

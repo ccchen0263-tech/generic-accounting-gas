@@ -8,7 +8,7 @@
  * 所有工作表名稱、欄位、科目分類規則都集中在這裡。
  */
 var APP = {
-  name: '公版會計系統',
+  name: '公版會計系統',   // 預設名稱；各客戶可在「公司管理」改成自己的系統名稱（存在指令碼屬性 APP_NAME）
   version: '0.4.0'
 };
 
@@ -153,7 +153,7 @@ var PERMISSIONS = {
 };
 
 /** 只有集團管理者能執行的動作（不分公司） */
-var GROUP_ACTIONS = ['listUsers', 'saveUser', 'resetPassword', 'listLog', 'listCompanies', 'createCompany', 'saveCompany'];
+var GROUP_ACTIONS = ['listUsers', 'saveUser', 'resetPassword', 'listLog', 'listCompanies', 'createCompany', 'saveCompany', 'saveAppName'];
 /** 集團報表：可看「自己是管理者或會計」的公司，至少兩家才顯示 */
 var CONSOLIDATED_ROLES = ['管理者', '會計'];
 
@@ -1550,6 +1550,17 @@ function hubSs_() {
   return SpreadsheetApp.openById(id);
 }
 
+/** 網頁與試算表選單顯示的系統名稱：各客戶自訂（指令碼屬性 APP_NAME），沒設定就用公版預設 */
+function appName_() {
+  var name = '';
+  try { name = str_(PropertiesService.getScriptProperties().getProperty('APP_NAME')); } catch (e) { name = ''; }
+  return name || APP.name;
+}
+
+function setAppName_(name) {
+  PropertiesService.getScriptProperties().setProperty('APP_NAME', name);
+}
+
 /** 目前公司的試算表 */
 function ss_() {
   var c = CTX.company;
@@ -1942,8 +1953,9 @@ function setPassword_(user, newPassword) {
  */
 function doGet() {
   var t = HtmlService.createTemplateFromFile('Index');
+  t.appName = appName_();
   return t.evaluate()
-    .setTitle(APP.name)
+    .setTitle(t.appName)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -2001,7 +2013,7 @@ HANDLERS.bootstrap = function (p, s) {
   var settings = loadSettings_();
   var accounts = loadAccounts_();
   return {
-    app: APP,
+    app: { name: appName_(), version: APP.version },
     user: { username: s.username, name: s.name, role: s.role, groupRole: s.groupRole },
     company: { id: CTX.company.id, name: CTX.company.name },
     companies: s.companies.map(function (x, i) { return { id: x.company.id, name: x.company.name, role: x.role, color: i }; }),
@@ -2718,6 +2730,18 @@ HANDLERS.saveCompany = function (p, s) {
     log_(s.username, '修改公司', c.id + ' ' + name + (enabled ? '' : '（停用）'));
     return { id: c.id };
   });
+};
+
+/** 系統名稱（登入畫面、瀏覽器分頁、試算表選單顯示的名稱），整個集團共用一個 */
+HANDLERS.saveAppName = function (p, s) {
+  var name = str_(p.name);
+  if (!name) throw new Error('請填系統名稱');
+  if (name.length > 30) throw new Error('系統名稱請在 30 個字以內');
+  if (/[<>]/.test(name)) throw new Error('系統名稱不能有 < 或 >');
+  var old = appName_();
+  setAppName_(name);
+  log_(s.username, '修改系統名稱', old + ' → ' + name);
+  return { name: name };
 };
 
 /** 依產業挑出參考庫科目代碼（含通用） */
@@ -3453,7 +3477,7 @@ function docsByVoucher_() {
  * 再到「執行紀錄」看管理者帳號 admin 的臨時密碼。
  */
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu(APP.name)
+  SpreadsheetApp.getUi().createMenu(appName_())
     .addItem('初始設定／更新科目參考庫', 'setup')
     .addItem('更新本月報表到試算表', 'writeReportsThisMonth')
     .addSeparator()

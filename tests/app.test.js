@@ -327,7 +327,7 @@ test('手動貼上版 dist/Code.gs 可獨立載入並完成初始設定與登入
   const pw = /臨時密碼：(\S+)/.exec(env.__logs.join('\n'))[1];
   assert.equal(ctx.login('admin', pw).ok, true);
   const html = fs.readFileSync(path.join(__dirname, '..', 'dist', 'Index.html'), 'utf8');
-  assert.ok(!html.includes('<?'), 'Index.html 不可殘留樣板標記');
+  assert.ok(!html.split('<?= appName ?>').join('').includes('<?'), 'Index.html 只能留系統名稱樣板變數');
   assert.ok(html.includes('google.script.run'));
 });
 
@@ -556,4 +556,26 @@ test('全新部署：以試算表檔名當第一家公司名稱', () => {
   assert.equal(c.name, '公版餐飲有限公司');
   app.CTX.company = c;
   assert.equal(app.loadSettings_().companyName, '公版餐飲有限公司');
+});
+
+// ───────────── 系統名稱（各客戶自訂） ─────────────
+
+test('系統名稱：預設為公版名稱，集團管理者可改成客戶自己的名稱', () => {
+  const { app, call, token } = setupApp();
+  assert.equal(call('bootstrap').app.name, '公版會計系統');
+  assert.throws(() => call('saveAppName', { name: '  ' }), /請填系統名稱/);
+  assert.throws(() => call('saveAppName', { name: 'x'.repeat(31) }), /30 個字/);
+  assert.throws(() => call('saveAppName', { name: '<b>壞</b>' }), /< 或 >/);
+  assert.equal(call('saveAppName', { name: ' 萊賦會計系統 ' }).name, '萊賦會計系統');
+  assert.equal(call('bootstrap').app.name, '萊賦會計系統');
+  assert.equal(app.appName_(), '萊賦會計系統');
+  assert.ok(call('listLog', {}).some((r) => r.action === '修改系統名稱'), '要留下操作紀錄');
+  // 一般成員不能改
+  const k = call('saveUser', { isNew: true, username: 'acct', name: '會計', groupRole: '成員', access: [{ companyId: 'C01', role: '會計' }] });
+  const r = app.login('acct', k.tempPassword);
+  const res = app.api(r.data.token, 'saveAppName', { name: '亂改' });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /集團管理者/);
+  assert.equal(app.appName_(), '萊賦會計系統');
+  void token;
 });

@@ -21,6 +21,7 @@ fs.writeFileSync(path.join(dist, 'Code.gs'), banner + code);
 
 let html = read('Index.html');
 html = html.replace("<?!= include('Css'); ?>", read('Css.html')).replace("<?!= include('Js'); ?>", read('Js.html'));
-if (html.includes('<?')) throw new Error('Index.html 仍有樣板標記');
+// 只允許系統名稱這個樣板變數（doGet 會帶入 appName）；其他樣板標記代表 include 沒換掉
+if (html.split('<?= appName ?>').join('').includes('<?')) throw new Error('Index.html 仍有樣板標記');
 fs.writeFileSync(path.join(dist, 'Index.html'), html);
 console.log(`dist/Code.gs、dist/Index.html 已產生（v${version}）`);

@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>公版會計系統</title>
+  <title><?= appName ?></title>
   <style>
   :root {
     --bg: #f5f6f4;
@@ -272,7 +272,7 @@
   <section id="login" class="login" hidden>
     <form id="loginForm" class="login-card" autocomplete="on">
       <div class="brand-mark" aria-hidden="true">帳</div>
-      <h1>公版會計系統</h1>
+      <h1><?= appName ?></h1>
       <p class="muted">請輸入帳號密碼登入</p>
       <label>帳號<input id="loginUser" name="username" autocomplete="username" required></label>
       <label>密碼<input id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
@@ -285,7 +285,7 @@
   <div id="app" class="app" hidden>
     <header class="topbar">
       <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="開啟選單" aria-expanded="false">☰</button>
-      <h1 id="companyTitle">公版會計系統</h1>
+      <h1 id="companyTitle"><?= appName ?></h1>
       <div class="co-switch" id="coWrap" hidden>
         <span class="co-dot" aria-hidden="true"></span>
         <select id="coSwitch" aria-label="切換公司"></select>
@@ -1864,6 +1864,8 @@
     function load() {
       return call('listCompanies').then(function (list) {
         el.innerHTML = '<div class="notice info">每家公司各自一份試算表，帳務完全分開；登入帳號與權限統一在這裡管理。新增公司時系統會自動建立試算表，並依產業帶入建議科目。</div>' +
+          '<div class="card"><label>系統名稱<span class="muted small">（登入畫面、瀏覽器分頁、試算表選單顯示的名稱）</span><input id="appNameInput" maxlength="30" value="' + esc(S.boot.app.name) + '"></label>' +
+          '<div class="modal-foot"><button class="btn primary" type="button" id="appNameSave">儲存系統名稱</button></div></div>' +
           '<div class="card"><div class="table-wrap"><table><thead><tr><th>代碼</th><th>公司名稱</th><th>試算表</th><th>狀態</th><th></th></tr></thead><tbody>' +
           list.map(function (c) {
             return '<tr><td class="code">' + esc(c.id) + '</td><td>' + esc(c.name) + (c.isHub ? ' <span class="badge auto">集團主檔</span>' : '') + '</td>' +
@@ -1871,6 +1873,14 @@
               '<td>' + (c.enabled ? '<span class="badge open">啟用</span>' : '<span class="badge lock">停用</span>') + '</td>' +
               '<td class="actions"><button class="btn small" type="button" data-ren="' + esc(c.id) + '">改名</button> <button class="btn small" type="button" data-tog="' + esc(c.id) + '">' + (c.enabled ? '停用' : '啟用') + '</button></td></tr>';
           }).join('') + '</tbody></table></div></div>';
+        $('#appNameSave', el).onclick = function () {
+          var name = $('#appNameInput', el).value.trim();
+          call('saveAppName', { name: name }).then(function (r) {
+            S.boot.app.name = r.name;
+            document.title = coName() + '｜' + r.name;
+            toast('系統名稱已改為「' + r.name + '」');
+          }).catch(function (e) { toast(e.message, true); });
+        };
         $all('[data-ren]', el).forEach(function (b) {
           b.onclick = function () {
             var c = list.filter(function (x) { return x.id === b.getAttribute('data-ren'); })[0];
@@ -2024,7 +2034,7 @@
       if (role === '管理者') {
         h += '<h3>管理者第一次設定</h3><ol><li>「公司設定」：公司名稱、產業類別、營業稅類型、開帳日。</li><li>「會計科目」→「科目參考庫」→「依公司產業一次加入建議科目」，再停用用不到的、新增自訂科目。</li>' +
           '<li>「期初餘額」：輸入開帳日當天的資產、負債、權益餘額（借貸要平衡）。</li><li>「帳號與權限」（集團管理者）：幫會計、助理開帳號並指派公司，臨時密碼只顯示一次。</li></ol>' +
-          '<h3>忘記密碼</h3><ul><li>其他人忘記：集團管理者在「帳號與權限」按「重設密碼」。</li><li>管理者自己忘記：打開試算表 → 上方選單「公版會計系統」→「重設 admin 密碼」。</li></ul>';
+          '<h3>忘記密碼</h3><ul><li>其他人忘記：集團管理者在「帳號與權限」按「重設密碼」。</li><li>管理者自己忘記：打開試算表 → 上方選單「' + esc(S.boot.app.name) + '」→「重設 admin 密碼」。</li></ul>';
       }
     }
     h += '</div>';

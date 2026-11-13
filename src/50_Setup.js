@@ -4,7 +4,7 @@
  * 再到「執行紀錄」看管理者帳號 admin 的臨時密碼。
  */
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu(APP.name)
+  SpreadsheetApp.getUi().createMenu(appName_())
     .addItem('初始設定／更新科目參考庫', 'setup')
     .addItem('更新本月報表到試算表', 'writeReportsThisMonth')
     .addSeparator()
