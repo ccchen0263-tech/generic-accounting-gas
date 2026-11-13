@@ -135,6 +135,18 @@ HANDLERS.saveCompany = function (p, s) {
   });
 };
 
+/** 系統名稱（登入畫面、瀏覽器分頁、試算表選單顯示的名稱），整個集團共用一個 */
+HANDLERS.saveAppName = function (p, s) {
+  var name = str_(p.name);
+  if (!name) throw new Error('請填系統名稱');
+  if (name.length > 30) throw new Error('系統名稱請在 30 個字以內');
+  if (/[<>]/.test(name)) throw new Error('系統名稱不能有 < 或 >');
+  var old = appName_();
+  setAppName_(name);
+  log_(s.username, '修改系統名稱', old + ' → ' + name);
+  return { name: name };
+};
+
 /** 依產業挑出參考庫科目代碼（含通用） */
 function referenceCodesFor_(industries) {
   var wanted = (industries || []).concat(['通用']);

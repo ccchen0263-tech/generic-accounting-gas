@@ -93,7 +93,7 @@ window.google = { script: { run: (function () {
 })() } };
 `;
 
-let html = read('Index.html');
+let html = read('Index.html').split('<?= appName ?>').join('公版會計系統');
 html = html.replace("<?!= include('Css'); ?>", read('Css.html'));
 html = html.replace("<?!= include('Js'); ?>",
   '<script>' + fakes + '</script>\n<script>' + seed + '</script>\n<script>' + serverJs + '</script>\n<script>' + afterServer + '</script>\n' + read('Js.html'));

@@ -3,7 +3,7 @@
  * 所有工作表名稱、欄位、科目分類規則都集中在這裡。
  */
 var APP = {
-  name: '公版會計系統',
+  name: '公版會計系統',   // 預設名稱；各客戶可在「公司管理」改成自己的系統名稱（存在指令碼屬性 APP_NAME）
   version: '0.4.0'
 };
 
@@ -148,7 +148,7 @@ var PERMISSIONS = {
 };
 
 /** 只有集團管理者能執行的動作（不分公司） */
-var GROUP_ACTIONS = ['listUsers', 'saveUser', 'resetPassword', 'listLog', 'listCompanies', 'createCompany', 'saveCompany'];
+var GROUP_ACTIONS = ['listUsers', 'saveUser', 'resetPassword', 'listLog', 'listCompanies', 'createCompany', 'saveCompany', 'saveAppName'];
 /** 集團報表：可看「自己是管理者或會計」的公司，至少兩家才顯示 */
 var CONSOLIDATED_ROLES = ['管理者', '會計'];
 

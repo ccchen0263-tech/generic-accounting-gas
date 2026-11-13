@@ -4,8 +4,9 @@
  */
 function doGet() {
   var t = HtmlService.createTemplateFromFile('Index');
+  t.appName = appName_();
   return t.evaluate()
-    .setTitle(APP.name)
+    .setTitle(t.appName)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -63,7 +64,7 @@ HANDLERS.bootstrap = function (p, s) {
   var settings = loadSettings_();
   var accounts = loadAccounts_();
   return {
-    app: APP,
+    app: { name: appName_(), version: APP.version },
     user: { username: s.username, name: s.name, role: s.role, groupRole: s.groupRole },
     company: { id: CTX.company.id, name: CTX.company.name },
     companies: s.companies.map(function (x, i) { return { id: x.company.id, name: x.company.name, role: x.role, color: i }; }),

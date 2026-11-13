@@ -16,6 +16,17 @@ function hubSs_() {
   return SpreadsheetApp.openById(id);
 }
 
+/** 網頁與試算表選單顯示的系統名稱：各客戶自訂（指令碼屬性 APP_NAME），沒設定就用公版預設 */
+function appName_() {
+  var name = '';
+  try { name = str_(PropertiesService.getScriptProperties().getProperty('APP_NAME')); } catch (e) { name = ''; }
+  return name || APP.name;
+}
+
+function setAppName_(name) {
+  PropertiesService.getScriptProperties().setProperty('APP_NAME', name);
+}
+
 /** 目前公司的試算表 */
 function ss_() {
   var c = CTX.company;
