@@ -94,9 +94,10 @@ window.google = { script: { run: (function () {
 `;
 
 let html = read('Index.html').split('<?= appName ?>').join('公版會計系統');
-html = html.replace("<?!= include('Css'); ?>", read('Css.html'));
+// 用函式當替換值：程式碼裡的 $' $& 等字元才不會被 replace 當成特殊符號
+html = html.replace("<?!= include('Css'); ?>", () => read('Css.html'));
 html = html.replace("<?!= include('Js'); ?>",
-  '<script>' + fakes + '</script>\n<script>' + seed + '</script>\n<script>' + serverJs + '</script>\n<script>' + afterServer + '</script>\n' + read('Js.html'));
+  () => '<script>' + fakes + '</script>\n<script>' + seed + '</script>\n<script>' + serverJs + '</script>\n<script>' + afterServer + '</script>\n' + read('Js.html'));
 if (html.includes('<?')) throw new Error('預覽頁仍有未處理的樣板標記');
 const out = path.join(__dirname, 'preview.html');
 fs.writeFileSync(out, html);

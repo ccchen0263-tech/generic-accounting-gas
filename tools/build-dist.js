@@ -20,7 +20,8 @@ const code = fs.readdirSync(src).filter((f) => f.endsWith('.js')).sort()
 fs.writeFileSync(path.join(dist, 'Code.gs'), banner + code);
 
 let html = read('Index.html');
-html = html.replace("<?!= include('Css'); ?>", read('Css.html')).replace("<?!= include('Js'); ?>", read('Js.html'));
+// 用函式當替換值：內容裡的 $' $& 等字元才不會被 replace 當成特殊符號
+html = html.replace("<?!= include('Css'); ?>", () => read('Css.html')).replace("<?!= include('Js'); ?>", () => read('Js.html'));
 // 只允許系統名稱這個樣板變數（doGet 會帶入 appName）；其他樣板標記代表 include 沒換掉
 if (html.split('<?= appName ?>').join('').includes('<?')) throw new Error('Index.html 仍有樣板標記');
 fs.writeFileSync(path.join(dist, 'Index.html'), html);
