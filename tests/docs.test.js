@@ -203,7 +203,7 @@ test('金額與賣方的邊界情況（Codex 審查）', () => {
   assert.equal(plain(app.parseReceiptText_('合計 1500 品項：3', {})).total, 1500);
   const r = plain(app.parseReceiptText_('銷售額 1,000\n營業稅 5% 50\n總計 1,050', {}));
   assert.deepEqual([r.net, r.tax, r.total], [1000, 50, 1050]);
-  assert.equal(plain(app.parseReceiptText_('賣方：大成 生鮮食品有限公司\n總計 100', {})).sellerName, '大成 生鮮食品有限公司');
+  assert.equal(plain(app.parseReceiptText_('賣方：範例 生鮮食品有限公司\n總計 100', {})).sellerName, '範例 生鮮食品有限公司');
   const b = plain(app.parseReceiptText_('買受人：公版餐飲有限公司 統一編號 ' + OWN + '\n範例生鮮食品有限公司\n統一編號 ' + SELLER + '\n總計 100', { taxId: OWN }));
   assert.equal(b.sellerTaxId, SELLER);
   assert.equal(b.buyerTaxId, OWN);
