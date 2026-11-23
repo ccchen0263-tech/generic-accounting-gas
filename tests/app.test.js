@@ -40,7 +40,7 @@ function restaurantBooks() {
     { code: '1113', debit: 105000 }, { code: '4121', credit: 100000 }, { code: '2161', credit: 5000 }
   ] });
   const buy = call('saveVoucher', { date: '2026-01-20', type: '支出', memo: '食材進貨', lines: [
-    { code: '5171', debit: 40000, party: '大成食品' }, { code: '1191', debit: 2000 }, { code: '1113', credit: 42000 }
+    { code: '5171', debit: 40000, party: '範例食品行' }, { code: '1191', debit: 2000 }, { code: '1113', credit: 42000 }
   ] });
   const rent = call('saveVoucher', { date: '2026-01-31', type: '支出', memo: '一月租金', lines: [
     { code: '6121', debit: 30000 }, { code: '1113', credit: 30000 }
@@ -230,7 +230,7 @@ test('分類帳：期初、累計餘額、往來對象篩選', () => {
   const lg = call('ledger', { code: '1113', from: '2026-01-01', to: '2026-01-31' });
   assert.equal(lg.openingBalance, 400000);
   assert.deepEqual(plain(lg.rows.map((r) => r.balance)), [505000, 463000, 433000]);
-  const party = call('ledger', { code: '5171', from: '2026-01-01', to: '2026-01-31', party: '大成食品' });
+  const party = call('ledger', { code: '5171', from: '2026-01-01', to: '2026-01-31', party: '範例食品行' });
   assert.equal(party.rows.length, 1);
   assert.equal(party.closingBalance, 40000);
 });
@@ -320,8 +320,8 @@ test('比較期間與統一編號檢查', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(app.compareRange_('2026-03-01', '2026-03-31', 'prev'))), { from: '2026-02-01', to: '2026-02-28' });
   assert.deepEqual(JSON.parse(JSON.stringify(app.compareRange_('2026-01-01', '2026-03-31', 'prev'))), { from: '2025-10-01', to: '2025-12-31' });
   assert.deepEqual(JSON.parse(JSON.stringify(app.compareRange_('2024-02-01', '2024-02-29', 'lastyear'))), { from: '2023-02-01', to: '2023-02-28' });
-  assert.equal(app.isValidTaxId_('22099131'), true);
-  assert.equal(app.isValidTaxId_('22099132'), false);
+  assert.equal(app.isValidTaxId_('91000004'), true);
+  assert.equal(app.isValidTaxId_('91000005'), false);
   assert.equal(app.isValidTaxId_('1234567'), false);
 });
 
@@ -332,7 +332,7 @@ test('安全：網頁訪客（匿名）不能呼叫初始設定或重設 admin �
   assert.throws(() => app.resetAdminPassword(), /只能從試算表/);
   assert.throws(() => app.setup(), /只能從試算表/);
   assert.throws(() => app.writeReportsThisMonth(), /只能從試算表/);
-  app.__session.email = 'visitor@same-domain.com'; // 同網域訪客
+  app.__session.email = 'visitor@example.org'; // 同網域訪客
   assert.throws(() => app.resetAdminPassword(), /只能從試算表/);
   assert.equal(app.findUser_('admin').hash, before);
   app.__session.email = 'owner@example.com';

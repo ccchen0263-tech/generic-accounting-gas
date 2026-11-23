@@ -7,13 +7,13 @@ const assert = require('node:assert/strict');
 const { loadApp } = require('./load');
 const plain = (x) => JSON.parse(JSON.stringify(x));
 
-const OWN = '53212539';     // 本公司統編（測試用）
-const SELLER = '22099131';  // 賣方統編（測試用）
-const OTHER = '04595257';   // 其他公司統編（測試用）
+const OWN = '90000001';     // 本公司統編（測試用）
+const SELLER = '91000004';  // 賣方統編（測試用）
+const OTHER = '92000002';   // 其他公司統編（測試用）
 
 const HANDWRITTEN = [
   '統一發票（三聯式）',
-  '大成生鮮食品有限公司',
+  '範例生鮮食品有限公司',
   '統一編號 ' + SELLER,
   '中華民國 115 年 10 月 28 日',
   'AB-12345678',
@@ -29,10 +29,10 @@ const RECEIPT = ['收 據', '阿明水電行', '日期：2026/10/30', '冷氣清
 const CSV = [
   '營業人進項發票明細',
   '發票狀態,發票號碼,發票日期,賣方統一編號,賣方名稱,買方統一編號,銷售額合計,營業稅,總計',
-  '已確認,CD11112222,115/10/05,' + SELLER + ',中華電信股份有限公司,' + OWN + ',"1,000",50,"1,050"',
-  '已確認,CD11113333,1151012,' + OTHER + ',台灣電力股份有限公司,' + OWN + ',2000,100,2100',
-  '作廢,CD11114444,115/10/15,' + SELLER + ',大成生鮮食品有限公司,' + OWN + ',500,25,525',
-  '已確認,EF55556666,2026-10-20,' + SELLER + ',大成生鮮食品有限公司,' + OWN + ',8000,400,8400'
+  '已確認,CD11112222,115/10/05,' + SELLER + ',範例電信股份有限公司,' + OWN + ',"1,000",50,"1,050"',
+  '已確認,CD11113333,1151012,' + OTHER + ',範例瓦斯股份有限公司,' + OWN + ',2000,100,2100',
+  '作廢,CD11114444,115/10/15,' + SELLER + ',範例生鮮食品有限公司,' + OWN + ',500,25,525',
+  '已確認,EF55556666,2026-10-20,' + SELLER + ',範例生鮮食品有限公司,' + OWN + ',8000,400,8400'
 ].join('\r\n');
 
 function books() {
@@ -69,7 +69,7 @@ test('辨識整理：手開三聯式發票，欄位來源標示原文', () => {
   assert.equal(r.date, '2026-10-28');
   assert.equal(r.sellerTaxId, SELLER);
   assert.equal(r.buyerTaxId, OWN);
-  assert.equal(r.sellerName, '大成生鮮食品有限公司');
+  assert.equal(r.sellerName, '範例生鮮食品有限公司');
   assert.deepEqual([r.net, r.tax, r.total], [10000, 500, 10500]);
   assert.deepEqual([r.src.net, r.src.tax, r.src.total, r.src.invoiceNo], ['原文', '原文', '原文', '原文']);
   assert.equal(r.deductible, undefined, '解析不判定扣抵');
@@ -134,11 +134,11 @@ test('扣抵建議：不能只看買方統編', () => {
 test('建議科目：依賣方名稱與產業', () => {
   const app = loadApp();
   const on = {}; ['5171', '5131', '6161', '6191', '6171', '6399'].forEach((c) => { on[c] = true; });
-  assert.equal(app.suggestExpense_('大成生鮮食品有限公司', ['餐飲'], on), '5171');
-  assert.equal(app.suggestExpense_('大成生鮮食品有限公司', ['食品製造'], on), '5131');
-  assert.equal(app.suggestExpense_('中華電信股份有限公司', ['餐飲'], on), '6161');
+  assert.equal(app.suggestExpense_('範例生鮮食品有限公司', ['餐飲'], on), '5171');
+  assert.equal(app.suggestExpense_('範例生鮮食品有限公司', ['食品製造'], on), '5131');
+  assert.equal(app.suggestExpense_('範例電信股份有限公司', ['餐飲'], on), '6161');
   assert.equal(app.suggestExpense_('阿明水電行 冷氣清洗', ['餐飲'], on), '6171');
-  assert.equal(app.suggestExpense_('台灣電力股份有限公司', ['餐飲'], on), '6191');
+  assert.equal(app.suggestExpense_('範例瓦斯股份有限公司', ['餐飲'], on), '6191');
   assert.equal(app.suggestExpense_('不知名商店', ['餐飲'], on), '6399');
   // 醫美、生技專用科目：沒啟用就略過，不會亂建議
   assert.equal(app.suggestExpense_('測試藥品股份有限公司 玻尿酸', ['餐飲'], on), '6399');
@@ -160,12 +160,12 @@ test('營業稅類型「免稅」的公司，進項稅額建議不可扣抵', ()
 
 test('電子發票證明聯（A4 版面，雲端硬碟 OCR 實際輸出，名稱與統編已換成測試資料）', () => {
   const app = loadApp();
-  const text = '電子發票證明聯 \n2026-11-04 \n發票號碼：HH40907524 格　　式：25 買　　方：測試買方股份有限公司 \n統一編號：' + OWN + ' \n地　　址： 第 1 頁／共 1 頁 \n' +
-    '品名 數量 單價 金額 備註 線上金流服務費 1 2,049 2,049 1BFS_X.EC \n銷售額合計 2,049 營業人蓋統一發票專用章 (已條列營業人資料者得免蓋章) \n' +
-    '營業稅 應稅 √ 零稅率 免稅 102 賣　　方：範例網路股份有限公司 \n總計 2,151 統一編號：' + SELLER + ' 總計新台幣(中文大寫) 地　　址：臺北市南港區經貿二路121號18樓 \n貳仟壹佰伍拾壹元整';
+  const text = '電子發票證明聯 \n2026-11-04 \n發票號碼：HH00001234 格　　式：25 買　　方：測試買方股份有限公司 \n統一編號：' + OWN + ' \n地　　址： 第 1 頁／共 1 頁 \n' +
+    '品名 數量 單價 金額 備註 線上金流服務費 1 2,049 2,049 TEST-001 \n銷售額合計 2,049 營業人蓋統一發票專用章 (已條列營業人資料者得免蓋章) \n' +
+    '營業稅 應稅 √ 零稅率 免稅 102 賣　　方：範例網路股份有限公司 \n總計 2,151 統一編號：' + SELLER + ' 總計新台幣(中文大寫) 地　　址：臺北市範例區測試路1號 \n貳仟壹佰伍拾壹元整';
   for (const own of [{}, { taxId: OWN, name: '公版餐飲有限公司' }, { taxId: '12345675', name: '別家公司' }]) {
     const r = plain(app.parseReceiptText_(text, own));
-    assert.equal(r.invoiceNo, 'HH40907524');
+    assert.equal(r.invoiceNo, 'HH00001234');
     assert.equal(r.date, '2026-11-04');
     assert.equal(r.sellerName, '範例網路股份有限公司');
     assert.equal(r.sellerTaxId, SELLER, '賣方統編要取「賣方」後面的那個');
@@ -177,17 +177,17 @@ test('電子發票證明聯（A4 版面，雲端硬碟 OCR 實際輸出，名稱
 
 test('傳票摘要：寫品名＋發票號碼，讀不到品名才用賣方', () => {
   const app = loadApp();
-  const einv = '發票號碼：HH40907524 格 式：25\n品名 數量 單價 金額 備註 線上金流服務費 1 2,049 2,049 1BFS_X.EC \n銷售額合計 2,049';
+  const einv = '發票號碼：HH00001234 格 式：25\n品名 數量 單價 金額 備註 線上金流服務費 1 2,049 2,049 TEST-001 \n銷售額合計 2,049';
   assert.equal(app.itemNameOf_(einv), '線上金流服務費');
   const table = ['品名 數量 單價 金額', '影印紙 A4 2 150 300', '原子筆 10 15 150', '資料夾 5 20 100', '膠帶 3 30 90', '合計 640'].join('\n');
   assert.equal(app.itemNameOf_(table), '影印紙 A4、原子筆、資料夾等');
   assert.equal(app.itemNameOf_('收據\n品名：冷氣清洗\n合計 3,200'), '冷氣清洗');
   assert.equal(app.itemNameOf_(HANDWRITTEN), '', '沒有品名表頭就不亂猜');
-  assert.equal(app.docMemo_({ sellerName: '範例網路股份有限公司', invoiceNo: 'HH40907524' }, '線上金流服務費'), '線上金流服務費 HH40907524');
-  assert.equal(app.docMemo_({ sellerName: '範例網路股份有限公司', invoiceNo: 'HH40907524' }, ''), '範例網路股份有限公司 HH40907524');
+  assert.equal(app.docMemo_({ sellerName: '範例網路股份有限公司', invoiceNo: 'HH00001234' }, '線上金流服務費'), '線上金流服務費 HH00001234');
+  assert.equal(app.docMemo_({ sellerName: '範例網路股份有限公司', invoiceNo: 'HH00001234' }, ''), '範例網路股份有限公司 HH00001234');
   const on = { 6331: true, 6399: true };
   assert.equal(app.suggestExpense_('範例網路股份有限公司\nLINE Pay 服務費', ['餐飲'], on), '6331');
-  assert.equal(app.suggestExpense_('大成生鮮食品有限公司\n豬肉 1 100\n付款方式：LINE Pay', ['餐飲'], { 5171: true, 6331: true, 6399: true }), '5171', '只是用 LINE Pay 付款不算手續費');
+  assert.equal(app.suggestExpense_('範例生鮮食品有限公司\n豬肉 1 100\n付款方式：LINE Pay', ['餐飲'], { 5171: true, 6331: true, 6399: true }), '5171', '只是用 LINE Pay 付款不算手續費');
 });
 
 test('金額與賣方的邊界情況（Codex 審查）', () => {
@@ -204,10 +204,10 @@ test('金額與賣方的邊界情況（Codex 審查）', () => {
   const r = plain(app.parseReceiptText_('銷售額 1,000\n營業稅 5% 50\n總計 1,050', {}));
   assert.deepEqual([r.net, r.tax, r.total], [1000, 50, 1050]);
   assert.equal(plain(app.parseReceiptText_('賣方：大成 生鮮食品有限公司\n總計 100', {})).sellerName, '大成 生鮮食品有限公司');
-  const b = plain(app.parseReceiptText_('買受人：公版餐飲有限公司 統一編號 ' + OWN + '\n大成生鮮食品有限公司\n統一編號 ' + SELLER + '\n總計 100', { taxId: OWN }));
+  const b = plain(app.parseReceiptText_('買受人：公版餐飲有限公司 統一編號 ' + OWN + '\n範例生鮮食品有限公司\n統一編號 ' + SELLER + '\n總計 100', { taxId: OWN }));
   assert.equal(b.sellerTaxId, SELLER);
   assert.equal(b.buyerTaxId, OWN);
-  const c = plain(app.parseReceiptText_('買受人：公版餐飲有限公司 統一編號 ' + OWN + '\n大成生鮮食品有限公司\n統一編號 ' + SELLER + '\n總計 100', {}));
+  const c = plain(app.parseReceiptText_('買受人：公版餐飲有限公司 統一編號 ' + OWN + '\n範例生鮮食品有限公司\n統一編號 ' + SELLER + '\n總計 100', {}));
   assert.equal(c.sellerTaxId, SELLER);
   assert.equal(c.buyerTaxId, OWN);
 });
@@ -253,7 +253,7 @@ test('上傳 → 原文另存 → 未判定不能入帳 → 人工校正 → 入
   assert.match(first.results[0].error, /判定進項稅額/);
 
   // 人工修正賣方名稱並判定可扣抵
-  const fixed = call('updateDoc', { id: up.id, rev: d0.rev, fields: { sellerName: '大成生鮮食品公司', deductible: '可扣抵' } });
+  const fixed = call('updateDoc', { id: up.id, rev: d0.rev, fields: { sellerName: '範例生鮮食品公司', deductible: '可扣抵' } });
   assert.equal(fixed.src.sellerName, '人工');
   assert.equal(fixed.src.deductible, '人工');
   assert.equal(fixed.confirmedBy, 'admin');
@@ -263,7 +263,7 @@ test('上傳 → 原文另存 → 未判定不能入帳 → 人工校正 → 入
   assert.equal(ok.ok, 1, JSON.stringify(ok.results));
   const v = call('getVoucher', { no: ok.results[0].no });
   assert.equal(v.source, '單據');
-  assert.equal(v.memo, '大成生鮮食品公司 AB12345678', '讀不到品名時摘要用賣方名稱');
+  assert.equal(v.memo, '範例生鮮食品公司 AB12345678', '讀不到品名時摘要用賣方名稱');
   assert.equal(v.type, '轉帳');
   assert.deepEqual(v.lines.map((l) => [l.code, l.debit, l.credit]), [['5171', 10000, 0], ['1191', 500, 0], ['2131', 0, 10500]]);
   assert.equal(call('listVouchers', { period: '2026-10' }).vouchers[0].docs[0].id, up.id);
@@ -281,14 +281,14 @@ test('電子發票證明聯上傳：建議手續費科目、摘要帶品名；�
   const { call, upload } = books();
   const einv = (no) => '電子發票證明聯\n2026-10-04\n發票號碼：' + no + ' 格 式：25 買 方：測試買方股份有限公司\n統一編號：' + OWN +
     '\n品名 數量 單價 金額 備註 LINE Pay 服務費 1 2,049 2,049 X.EC\n銷售額合計 2,049 營業人蓋統一發票專用章\n營業稅 應稅 √ 零稅率 免稅 102 賣 方：範例網路股份有限公司\n總計 2,151 統一編號：' + SELLER;
-  const a = upload(einv('HH40907524'), 'a.pdf');
+  const a = upload(einv('HH00001234'), 'a.pdf');
   const d = call('getDoc', { id: a.id });
   assert.equal(d.suggest, '6331');
   assert.equal(d.item, 'LINE Pay 服務費');
   const r = call('postDocs', { items: [itemOf(call, a.id, { pay: '1111', deductible: '可扣抵' })] });
   assert.equal(r.ok, 1, JSON.stringify(r.results));
   const v = call('getVoucher', { no: r.results[0].no });
-  assert.equal(v.memo, 'LINE Pay 服務費 HH40907524');
+  assert.equal(v.memo, 'LINE Pay 服務費 HH00001234');
   assert.deepEqual(v.lines.map((l) => [l.code, l.debit, l.credit]), [['6331', 2049, 0], ['1191', 102, 0], ['1111', 0, 2151]]);
   const b = upload(einv('HH40907525'), 'b.pdf');
   const r2 = call('postDocs', { items: [itemOf(call, b.id, { pay: '1111', deductible: '可扣抵', memo: '十月 LINE Pay 金流服務費' })] });
@@ -302,7 +302,7 @@ const MOF_MD = [
   'M,EJ17530001,,25,已確認,2026-09-01 18:56:00,' + OWN + ',' + OWN + ',' + SELLER + ',範例加油站,2026-09-01,1143,1143,0,0,57,1200,應稅,0,,,,,2026-09-01 23:33,2026-09-01 23:33,F0401,' + SELLER + ',範例加油站,',
   'D,EJ17530001,2026-09-01 18:56,1,98無鉛汽油,36.35,ST,34,1236,,,,,,,,,,,,,,,,,,,,',
   'D,EJ17530001,2026-09-01 18:56,2,折扣,1,ST,-36,-36,,,,,,,,,,,,,,,,,,,,',
-  'M,EJ17530002,,25,已確認,2026-09-03 20:53:47,' + OWN + ',' + OWN + ',573951,範例文具行,2026-09-03,300,300,0,0,15,315,應稅,0,,,,,2026-09-03 23:33,2026-09-03 23:33,F0401,573951,範例文具行,',
+  'M,EJ17530002,,25,已確認,2026-09-03 20:53:47,' + OWN + ',' + OWN + ',123404,範例文具行,2026-09-03,300,300,0,0,15,315,應稅,0,,,,,2026-09-03 23:33,2026-09-03 23:33,F0401,123404,範例文具行,',
   'D,EJ17530002,2026-09-03 20:53,1,影印紙,1,包,100,100,,,,,,,,,,,,,,,,,,,,',
   'D,EJ17530002,2026-09-03 20:53,2,原子筆,10,支,10,100,,,,,,,,,,,,,,,,,,,,',
   'D,EJ17530002,2026-09-03 20:53,3,資料夾,5,個,10,50,,,,,,,,,,,,,,,,,,,,',
@@ -315,7 +315,7 @@ test('財政部 M／D 格式：D 列當品名不當發票、統編補 0、作廢
   const r = plain(app.parseInvoiceCsv_(MOF_MD));
   assert.equal(r.rows.length, 2, JSON.stringify(r));
   assert.deepEqual(r.rows.map((x) => [x.invoiceNo, x.date, x.sellerTaxId, x.net, x.tax, x.total]),
-    [['EJ17530001', '2026-09-01', SELLER, 1143, 57, 1200], ['EJ17530002', '2026-09-03', '00573951', 300, 15, 315]]);
+    [['EJ17530001', '2026-09-01', SELLER, 1143, 57, 1200], ['EJ17530002', '2026-09-03', '00123404', 300, 15, 315]]);
   assert.deepEqual(r.rows.map((x) => x.items), ['98無鉛汽油', '影印紙、原子筆、資料夾等']);
   assert.equal(r.skipped.length, 1, '只有作廢那張被略過，D 列不能出現在略過清單：' + r.skipped.join('；'));
 
@@ -335,7 +335,7 @@ test('財政部匯入防呆：銷項檔擋下、選錯公司擋下、混入的�
   const head = MOF_MD.split('\r\n').slice(0, 2).join('\r\n');
   const m = (no, buyer, seller) => 'M,' + no + ',,35,開立已確認,2026-10-06 22:32:10,' + buyer + ',' + buyer + ',' + seller + ',某公司,2026-10-06,100,100,0,0,5,105,應稅,0,,,,,,,F0401,,,';
   // 銷項：賣方是本公司
-  assert.throws(() => call('importInvoices', { text: head + '\r\n' + m('FN86350001', '0000000000', OWN) + '\r\n' + m('FN86350002', '22099131', OWN) }), /銷項.*_IN_/);
+  assert.throws(() => call('importInvoices', { text: head + '\r\n' + m('FN86350001', '0000000000', OWN) + '\r\n' + m('FN86350002', '91000004', OWN) }), /銷項.*_IN_/);
   // 選錯公司：買方都是別家
   assert.throws(() => call('importInvoices', { text: head + '\r\n' + m('FN86350003', '12345675', SELLER) }), /買方統編是 12345675.*切換/);
   // 混在一起：銷項那張略過，進項照常匯入

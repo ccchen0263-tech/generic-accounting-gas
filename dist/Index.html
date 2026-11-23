@@ -1445,7 +1445,7 @@
     var def = S.acctMap['1113'] ? '1113' : (S.boot.accounts[0] || {}).code || '';
     el.innerHTML = '<datalist id="lgList">' + acctOptions(function () { return true; }) + '</datalist>' +
       '<div class="row" style="margin-bottom:10px"><label class="grow">科目<input list="lgList" id="lgAcct" value="' + esc(def ? acctLabel(def) : '') + '"></label>' +
-      '<label class="field">往來對象（選填）<input id="lgParty" placeholder="例如：大成食品"></label></div><div id="lgCtl"></div><div id="lgOut"></div>';
+      '<label class="field">往來對象（選填）<input id="lgParty" placeholder="例如：範例食品行"></label></div><div id="lgCtl"></div><div id="lgOut"></div>';
     rangeControls($('#lgCtl'), quickRange('thisMonth'), function (p) {
       p.code = parseAcct($('#lgAcct').value);
       p.party = $('#lgParty').value.trim();

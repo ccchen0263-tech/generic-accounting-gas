@@ -424,7 +424,7 @@ var INVOICE_COLUMNS = {
  * 欄位以標題名稱對應（不固定欄位順序），也支援手機條碼載具的「M|…」格式。
  * 回傳 { rows: [...], skipped: [...說明] }
  */
-/** 統編被 Excel 去掉開頭的 0（00573951 → 573951）時補回 8 碼 */
+/** 統編被 Excel 去掉開頭的 0（00123404 → 123404）時補回 8 碼 */
 function taxId8_(v) {
   var t = str_(v).replace(/\s/g, '');
   return /^\d{1,7}$/.test(t) ? ('0000000' + t).slice(-8) : t;

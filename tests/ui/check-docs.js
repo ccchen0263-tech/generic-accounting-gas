@@ -54,14 +54,14 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     const msg2 = await page.textContent('#upProg');
     if (!/請按「匯入財政部進項發票檔」/.test(msg2) || /找不到/.test(msg2)) fail('CSV 選到照片按鈕時提醒不對：' + msg2);
     // 財政部檔是 UTF-16（Unicode 文字）也要讀得懂；副檔名 .csv 但內容是 Excel 要明確提醒
-    const u16 = '\uFEFF發票狀態\t發票號碼\t發票日期\t賣方統一編號\t賣方名稱\t買方統一編號\t銷售額合計\t營業稅\t總計\r\n已確認\tKL99887766\t115/02/03\t22099131\t測試商行\t53212539\t100\t5\t105\r\n';
+    const u16 = '\uFEFF發票狀態\t發票號碼\t發票日期\t賣方統一編號\t賣方名稱\t買方統一編號\t銷售額合計\t營業稅\t總計\r\n已確認\tKL99887766\t115/02/03\t91000004\t測試商行\t90000001\t100\t5\t105\r\n';
     fs.writeFileSync(path.join(tmp, 'utf16.csv'), Buffer.from(u16, 'utf16le'));
     await page.setInputFiles('#invFile', path.join(tmp, 'utf16.csv'));
     await idle(page);
     await page.waitForTimeout(300);
     if (!/匯入 1 張發票/.test(await page.textContent('#upProg'))) fail('UTF-16 的 CSV 讀不懂：' + await page.textContent('#upProg'));
     // UTF-8 檔裡夾了一個壞位元組（UTF-8 嚴格模式會整份失敗）：仍要讀成 UTF-8，不能變成 Big5 亂碼
-    const u8ok = Buffer.from('發票號碼,發票日期,賣方統一編號,賣方名稱,銷售額合計,營業稅,總計\r\nKL99887700,115/02/04,22099131,測試商行,200,10,210\r\n', 'utf8');
+    const u8ok = Buffer.from('發票號碼,發票日期,賣方統一編號,賣方名稱,銷售額合計,營業稅,總計\r\nKL99887700,115/02/04,91000004,測試商行,200,10,210\r\n', 'utf8');
     fs.writeFileSync(path.join(tmp, 'utf8bad.csv'), Buffer.concat([u8ok, Buffer.from([0xff, 0x0d, 0x0a])]));
     await page.setInputFiles('#invFile', path.join(tmp, 'utf8bad.csv'));
     await idle(page);
@@ -78,7 +78,7 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     await page.waitForTimeout(400);
     if (!/其實是 Excel/.test(await page.textContent('#upProg'))) fail('副檔名 csv 的 Excel 沒有提醒');
     // 1. 校正畫面
-    await page.locator('#docList .doc-row', { hasText: '大成生鮮' }).locator('.doc-open').click();
+    await page.locator('#docList .doc-row', { hasText: '範例生鮮' }).locator('.doc-open').click();
     await page.waitForSelector('#modal:not([hidden]) .review');
     await idle(page);
     if (!(await page.locator('#rvFile img.doc-img').count())) fail('校正畫面左邊沒有原始單據');
@@ -96,7 +96,7 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     await idle(page);
     if (!/判定進項稅額/.test(await page.textContent('#rvErr'))) fail('未判定扣抵時應擋下入帳');
     // 改了欄位直接按確認：要先存檔、重新檢查、顯示最新結果，不能直接入帳（Codex P2）
-    await page.fill('[data-f="sellerName"]', '大成生鮮食品股份有限公司');
+    await page.fill('[data-f="sellerName"]', '範例生鮮食品股份有限公司');
     await page.check('input[name="rvDed"][value="可扣抵"]');
     await page.selectOption('#rvPay', '2131');
     await page.click('#rvPost');
@@ -113,7 +113,7 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
     if (left !== 7) fail('入帳後待處理應剩 7 張（含剛匯入的 UTF-16、UTF-8、Big5 發票），實際 ' + left);
 
     // 2. 批次確認
-    for (const who of ['中華電信', '台灣電力']) await page.locator('#docList .doc-row', { hasText: who }).locator('[data-pick]').check();
+    for (const who of ['範例電信', '範例瓦斯']) await page.locator('#docList .doc-row', { hasText: who }).locator('[data-pick]').check();
     await page.waitForSelector('#batchBar:not([hidden])');
     if (!/已選 2 張/.test(await page.textContent('#batchBar'))) fail('批次列沒有顯示已選 2 張');
     await page.selectOption('#bPay', '1113');
@@ -135,7 +135,7 @@ const idle = (page) => page.waitForFunction(() => document.querySelector('#busy'
 
     await nav('vouchers');
     await page.waitForSelector('#vList .voucher');
-    const card = page.locator('#vList .voucher', { hasText: '大成生鮮' });
+    const card = page.locator('#vList .voucher', { hasText: '範例生鮮' });
     if (!(await card.locator('.badge.open').count())) fail('傳票沒有顯示「附單據」');
     await card.locator('.voucher-head').click();
     const cells = await card.locator('tbody tr').allInnerTexts();
