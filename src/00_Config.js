@@ -4,7 +4,7 @@
  */
 var APP = {
   name: '公版會計系統',   // 預設名稱；各客戶可在「公司管理」改成自己的系統名稱（存在指令碼屬性 APP_NAME）
-  version: '0.4.0'
+  version: '0.5.0'
 };
 
 var SHEETS = {
