@@ -343,7 +343,7 @@ function validateDoc_(d, ctx) {
   if (d.date && isValidDate_(d.date) && open) {
     if (ctx.today && d.date > ctx.today) add('DATE_FUTURE', '錯誤', 'date', '日期在今天之後');
     if (ctx.openingDate && d.date < ctx.openingDate) add('DATE_BEFORE_OPENING', '錯誤', 'date', '日期早於開帳日 ' + ctx.openingDate);
-    if (ctx.lockedPeriods && ctx.lockedPeriods[d.date.slice(0, 7)]) add('PERIOD_LOCKED', '錯誤', 'date', d.date.slice(0, 7) + ' 已鎖帳');
+    if (isLocked_(ctx.lockedPeriods, d.date.slice(0, 7))) add('PERIOD_LOCKED', '錯誤', 'date', d.date.slice(0, 7) + ' 已鎖帳');
   }
 
   var idx = ctx.index || { byInv: {}, bySuspect: {} };

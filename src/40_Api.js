@@ -22,6 +22,7 @@ function include(name) {
 function api(token, action, payload) {
   CTX.company = null;
   CTX.ssCache = {};
+  beginRequestMemo_();
   try {
     payload = payload || {};
     var session = sessionFromToken_(token);
@@ -50,6 +51,7 @@ function api(token, action, payload) {
   } finally {
     CTX.company = null;
     CTX.ssCache = {};
+    endRequestMemo_();
   }
 }
 
@@ -118,7 +120,11 @@ HANDLERS.saveVoucher = function (p, s) {
   });
 };
 
-/** 新增或修改傳票（不加鎖，呼叫端負責加鎖） */
+/**
+ * 新增或修改傳票（不加鎖，呼叫端負責加鎖）
+ * 修改：舊分錄不刪除，標記「已修改」保留在試算表（查核用），再新增新版本分錄；號碼不變。
+ * 傳票號碼依月份編號（yyyyMM-），所以修改時不能把日期改到其他月份。
+ */
 function saveVoucherCore_(p, s) {
     var accounts = loadAccounts_();
     var byCode = indexAccounts_(accounts);
@@ -131,7 +137,10 @@ function saveVoucherCore_(p, s) {
       if (!old.length) throw new Error('找不到傳票 ' + p.no);
       if (old[0].status === '作廢') throw new Error('已作廢的傳票不能修改');
       if (old[0].source === '月底盤點') throw new Error('月底盤點傳票請到「月底盤點」重新產生');
-      if (locked[old[0].date.slice(0, 7)]) throw new Error(old[0].date.slice(0, 7) + ' 已鎖帳，不能修改');
+      if (isLocked_(locked, old[0].date.slice(0, 7))) throw new Error(old[0].date.slice(0, 7) + ' 已鎖帳，不能修改');
+      if (isValidDate_(str_(p.date)) && str_(p.date).slice(0, 7) !== old[0].date.slice(0, 7)) {
+        throw new Error('傳票 ' + p.no + ' 是 ' + old[0].date.slice(0, 7) + ' 的號碼，修改時不能把日期改到其他月份。\n請作廢這張傳票，再用新日期重新新增（可用「複製成新傳票」）。');
+      }
     }
     var v = { date: str_(p.date), type: str_(p.type), lines: p.lines || [] };
     var check = validateVoucher_(v, { accountsByCode: byCode, openingDate: settings.openingDate, lockedPeriods: locked });
@@ -159,9 +168,24 @@ function saveVoucherCore_(p, s) {
         '修改者': old.length ? s.username : '', '修改時間': old.length ? now : ''
       };
     });
-    if (old.length) deleteRowNumbers_(SHEETS.VOUCHERS, old.map(function (l) { return l._row; }));
-    appendObjects_(SHEETS.VOUCHERS, rows);
-    log_(s.username, old.length ? '修改傳票' : '新增傳票', no + ' ' + v.date + ' 金額 ' + check.debit);
+    if (old.length) {
+      // 先把舊分錄標成「已修改」（不刪除），再寫新版本；新版本寫入失敗就把舊分錄改回有效
+      updateCellsMany_(SHEETS.VOUCHERS, old.map(function (l) { return l._row; }), { '狀態': VOUCHER_SUPERSEDED, '修改者': s.username, '修改時間': now });
+      try {
+        appendObjects_(SHEETS.VOUCHERS, rows);
+      } catch (e) {
+        try {
+          old.forEach(function (l) { updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': l.status, '修改者': l.updatedBy, '修改時間': l.updatedAt }); });
+        } catch (e2) { /* 還原失敗：舊分錄仍在試算表（狀態「已修改」），可人工改回 */ }
+        throw e;
+      }
+      var oldTotal = 0;
+      old.forEach(function (l) { oldTotal += Number(l.debit) || 0; });
+      log_(s.username, '修改傳票', no + ' ' + v.date + ' 金額 ' + check.debit + '（修改前：' + old[0].date + ' 金額 ' + oldTotal + '，共 ' + old.length + ' 行，舊分錄保留在「傳票」分頁，狀態「' + VOUCHER_SUPERSEDED + '」、修改時間 ' + now + '）');
+    } else {
+      appendObjects_(SHEETS.VOUCHERS, rows);
+      log_(s.username, '新增傳票', no + ' ' + v.date + ' 金額 ' + check.debit);
+    }
     return { no: no, debit: check.debit };
 }
 
@@ -171,11 +195,11 @@ HANDLERS.voidVoucher = function (p, s) {
     if (!rows.length) throw new Error('找不到傳票 ' + p.no);
     if (rows[0].status === '作廢') throw new Error('此傳票已作廢');
     if (rows[0].source === '月底盤點') throw new Error('月底盤點傳票請到「月底盤點」重新盤點或取消盤點');
-    if (lockedPeriodsMap_()[rows[0].date.slice(0, 7)]) throw new Error(rows[0].date.slice(0, 7) + ' 已鎖帳，不能作廢');
+    if (isLocked_(lockedPeriodsMap_(), rows[0].date.slice(0, 7))) throw new Error(rows[0].date.slice(0, 7) + ' 已鎖帳，不能作廢');
     var reason = str_(p.reason);
     if (!reason) throw new Error('請填寫作廢原因');
     var now = nowText_();
-    rows.forEach(function (l) { updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now }); });
+    updateCellsMany_(SHEETS.VOUCHERS, rows.map(function (l) { return l._row; }), { '狀態': '作廢', '修改者': s.username, '修改時間': now });
     releaseDocsOf_(p.no, s);
     log_(s.username, '作廢傳票', p.no + '：' + reason);
     return { no: p.no };
@@ -326,7 +350,7 @@ HANDLERS.getOpening = function () {
   loadOpening_().forEach(function (o) { open[o.code] = o; });
   return {
     openingDate: settings.openingDate,
-    locked: !!(settings.openingDate && lockedPeriodsMap_()[settings.openingDate.slice(0, 7)]),
+    locked: !!(settings.openingDate && isLocked_(lockedPeriodsMap_(), settings.openingDate.slice(0, 7))),
     rows: accounts.sort(sortByCode_).map(function (a) {
       var o = open[a.code] || { debit: 0, credit: 0 };
       return { code: a.code, name: a.name, block: a.block, normal: a.normal, enabled: a.enabled, debit: o.debit, credit: o.credit };
@@ -338,7 +362,8 @@ HANDLERS.saveOpening = function (p, s) {
   return withLock_(function () {
     var settings = loadSettings_();
     if (!settings.openingDate) throw new Error('請先到「公司設定」填寫開帳日');
-    if (lockedPeriodsMap_()[settings.openingDate.slice(0, 7)]) throw new Error('開帳日所在月份已鎖帳，不能修改期初餘額');
+    // 期初餘額影響開帳日以後每個月的餘額：只要開帳月份（或之後任何月份）已鎖帳就不能改
+    if (isLocked_(lockedPeriodsMap_(), settings.openingDate.slice(0, 7))) throw new Error('開帳日所在月份已鎖帳（鎖帳會連同之前的月份一起鎖住），不能修改期初餘額');
     var byCode = indexAccounts_(loadAccounts_());
     var rows = (p.rows || []).map(function (r) { return { code: str_(r.code), debit: toAmount_(r.debit), credit: toAmount_(r.credit) }; });
     var check = validateOpening_(rows, byCode);
@@ -381,7 +406,7 @@ HANDLERS.stocktakePreview = function (p) {
   var counted = {};
   records.forEach(function (r) { counted[str_(r['存貨科目'])] = toAmount_(r['盤點金額']); });
   preview.forEach(function (row) { row.counted = counted[row.code] !== undefined ? counted[row.code] : ''; });
-  return { period: period, endDate: monthEnd_(period), locked: !!lockedPeriodsMap_()[period], rows: preview, priorVouchers: activeNos };
+  return { period: period, endDate: monthEnd_(period), locked: isLocked_(lockedPeriodsMap_(), period), rows: preview, priorVouchers: activeNos };
 };
 
 HANDLERS.stocktakeSave = function (p, s) {
@@ -389,7 +414,7 @@ HANDLERS.stocktakeSave = function (p, s) {
     var period = str_(p.period);
     checkStocktakePeriod_(period);
     var locked = lockedPeriodsMap_();
-    if (locked[period]) throw new Error(period + ' 已鎖帳');
+    if (isLocked_(locked, period)) throw new Error(period + ' 已鎖帳');
     var lines = loadLines_();
     var records = stocktakeRecords_(period);
     var activeNos = activeStocktakeNos_(records, lines);
@@ -404,9 +429,7 @@ HANDLERS.stocktakeSave = function (p, s) {
       if (check.errors.length) throw new Error('無法產生盤點傳票：\n' + check.errors.join('\n'));
     }
     var now = nowText_();
-    lines.forEach(function (l) {
-      if (activeNos.indexOf(l.no) >= 0) updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now });
-    });
+    updateCellsMany_(SHEETS.VOUCHERS, lines.filter(function (l) { return activeNos.indexOf(l.no) >= 0; }).map(function (l) { return l._row; }), { '狀態': '作廢', '修改者': s.username, '修改時間': now });
     var newNo = '';
     if (built.voucher) {
       built.voucher.source = '月底盤點';
@@ -429,7 +452,7 @@ HANDLERS.stocktakeClear = function (p, s) {
   return withLock_(function () {
     var period = str_(p.period);
     checkStocktakePeriod_(period);
-    if (lockedPeriodsMap_()[period]) throw new Error(period + ' 已鎖帳');
+    if (isLocked_(lockedPeriodsMap_(), period)) throw new Error(period + ' 已鎖帳');
     var reason = str_(p.reason);
     if (!reason) throw new Error('請填寫取消原因');
     var lines = loadLines_();
@@ -437,9 +460,7 @@ HANDLERS.stocktakeClear = function (p, s) {
     if (!records.length) throw new Error(period + ' 沒有盤點紀錄');
     var activeNos = activeStocktakeNos_(records, lines);
     var now = nowText_();
-    lines.forEach(function (l) {
-      if (activeNos.indexOf(l.no) >= 0) updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now });
-    });
+    updateCellsMany_(SHEETS.VOUCHERS, lines.filter(function (l) { return activeNos.indexOf(l.no) >= 0; }).map(function (l) { return l._row; }), { '狀態': '作廢', '修改者': s.username, '修改時間': now });
     deleteRowNumbers_(SHEETS.STOCKTAKE, records.map(function (r) { return r._row; }));
     log_(s.username, '取消月底盤點', period + '：' + reason + (activeNos.length ? '，作廢傳票 ' + activeNos.join('、') : ''));
     return { period: period, voided: activeNos };
@@ -456,6 +477,7 @@ HANDLERS.listPeriods = function () {
   lines.forEach(function (l) { if (l.date && l.date.slice(0, 7) < first) first = l.date.slice(0, 7); });
   var map = {};
   loadPeriods_().forEach(function (p) { map[p.period] = p; });
+  var through = lockedPeriodsMap_()._through || '';
   var counts = {};
   activeLines_(lines).forEach(function (l) { var k = l.date.slice(0, 7); counts[k] = counts[k] || {}; counts[k][l.no] = true; });
   var out = [];
@@ -465,7 +487,11 @@ HANDLERS.listPeriods = function () {
   while (guard++ < 600) {
     var k = y + '-' + pad_(m, 2);
     var rec = map[k] || {};
-    out.push({ period: k, status: rec.status || '開放', lockedBy: rec.lockedBy || '', lockedAt: rec.lockedAt || '', vouchers: counts[k] ? Object.keys(counts[k]).length : 0 });
+    var explicit = rec.status === '已鎖定';
+    // 還沒標記鎖帳、但後面月份已鎖帳 → 一起鎖住（implied），不能單獨解鎖
+    var implied = !explicit && !!through && k <= through;
+    out.push({ period: k, status: explicit || implied ? '已鎖定' : '開放', implied: implied, lockedThrough: implied ? through : '',
+      lockedBy: explicit ? rec.lockedBy || '' : '', lockedAt: explicit ? rec.lockedAt || '' : '', vouchers: counts[k] ? Object.keys(counts[k]).length : 0 });
     if (k >= last) break;
     m++; if (m > 12) { m = 1; y++; }
   }
@@ -483,6 +509,7 @@ function setPeriodStatus_(period, status, s) {
 HANDLERS.lockPeriod = function (p, s) {
   return withLock_(function () {
     var period = str_(p.period);
+    if (!isValidPeriod_(period)) throw new Error('期間格式需為 yyyy-MM');
     var tb = trialBalance_(loadAccounts_(), loadOpening_(), loadLines_(), '', monthEnd_(period));
     if (!tb.balanced) throw new Error('截至 ' + monthEnd_(period) + ' 的試算表借貸不平衡（多半是期初餘額未平衡），請先修正再鎖帳');
     setPeriodStatus_(period, '已鎖定', s);
@@ -495,7 +522,13 @@ HANDLERS.unlockPeriod = function (p, s) {
   return withLock_(function () {
     var reason = str_(p.reason);
     if (!reason) throw new Error('請填寫解鎖原因');
-    setPeriodStatus_(str_(p.period), '開放', s);
+    var period = str_(p.period);
+    if (!isValidPeriod_(period)) throw new Error('期間格式需為 yyyy-MM');
+    var explicit = explicitLocks_();
+    var later = Object.keys(explicit).filter(function (k) { return k > period; }).sort();
+    if (later.length) throw new Error(period + ' 之後的 ' + later[later.length - 1] + ' 還鎖著（鎖帳會連同之前的月份一起鎖住），請從最後一個鎖帳月份開始解鎖');
+    if (!explicit[period]) throw new Error(period + ' 沒有鎖帳');
+    setPeriodStatus_(period, '開放', s);
     log_(s.username, '解鎖', p.period + '：' + reason);
     return { period: p.period };
   });
@@ -606,6 +639,9 @@ HANDLERS.saveSettings = function (p, s) {
     if (old.openingDate && !st.openingDate && (loadOpening_().length || loadLines_().length)) {
       errors.push('已有期初餘額或傳票，開帳日不能清空');
     }
+    var hasLocks = Object.keys(explicitLocks_()).length > 0;
+    if (hasLocks && st.fyStartMonth !== old.fyStartMonth) errors.push('已有鎖帳月份，不能修改會計年度起始月（會改變已鎖帳月份的本期損益）；請先解鎖全部月份再修改');
+    if (hasLocks && st.openingDate !== old.openingDate) errors.push('已有鎖帳月份，不能修改開帳日；請先解鎖全部月份再修改');
     if (st.openingDate && st.openingDate !== old.openingDate) {
       var earlier = loadLines_().filter(function (l) { return l.status !== '作廢' && l.date < st.openingDate; });
       if (earlier.length) errors.push('已有早於 ' + st.openingDate + ' 的傳票（' + earlier[0].no + '），不能把開帳日改晚');
@@ -636,7 +672,7 @@ HANDLERS.resetPassword = function (p, s) {
 
 HANDLERS.changePassword = function (p, s) {
   var u = findUser_(s.username);
-  if (!u || hashPassword_(u.salt, String(p.oldPassword || '')) !== u.hash) throw new Error('目前密碼不正確');
+  if (!u || !verifyPassword_(u, String(p.oldPassword || '')).ok) throw new Error('目前密碼不正確');
   var err = validatePasswordStrength_(p.newPassword);
   if (err) throw new Error(err);
   setPassword_(u, p.newPassword);

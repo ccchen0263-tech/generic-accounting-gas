@@ -98,6 +98,11 @@ var BLOCKS = {
 };
 
 var VOUCHER_TYPES = ['收入', '支出', '轉帳'];
+/**
+ * 傳票分錄的狀態：有效、作廢（整張作廢，仍顯示在傳票列表）、已修改（修改前的舊內容，只留在試算表供查核）
+ * 修改傳票時舊列不刪除，改標「已修改」，修改者／修改時間＝被取代的人與時間；同號碼、修改時間相同的有效列就是新版本。
+ */
+var VOUCHER_SUPERSEDED = '已修改';
 
 /** 在某家公司的角色 */
 var ROLES = ['管理者', '會計', '助理'];
@@ -155,7 +160,15 @@ var GROUP_ACTIONS = ['listUsers', 'saveUser', 'resetPassword', 'listLog', 'listC
 /** 集團報表：可看「自己是管理者或會計」的公司，至少兩家才顯示 */
 var CONSOLIDATED_ROLES = ['管理者', '會計'];
 
+/** 同一個瀏覽器錯 5 次 → 這個瀏覽器鎖 10 分鐘 */
 var LOGIN_MAX_FAILS = 5;
 var LOGIN_LOCK_SECONDS = 600;
-var LOGIN_GLOBAL_SLOWDOWN = 20;
+/** 同一個帳號（不分瀏覽器）錯 10 次 → 這個帳號暫停登入 15 分鐘；管理者重設密碼後立即解除 */
+var LOGIN_USER_MAX_FAILS = 10;
+var LOGIN_USER_LOCK_SECONDS = 900;
+/**
+ * 密碼雜湊：SHA-256 反覆計算的次數（越多越難暴力破解，但登入越慢）。
+ * 次數記在雜湊值裡（v2$次數$雜湊），之後調整次數不影響舊密碼；使用者下次登入時自動改用新次數。
+ */
+var PW_ITERATIONS = 3000;
 var SESSION_SECONDS = 21600; // 6 小時

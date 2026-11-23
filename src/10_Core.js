@@ -44,6 +44,39 @@ function activeLines_(lines) {
   return lines.filter(function (l) { return l.status !== '作廢'; });
 }
 
+// ───────────── 鎖帳 ─────────────
+
+/**
+ * 鎖帳是「累計」的：最晚一個已鎖帳月份（含）以前的月份全部視為鎖定。
+ * 否則鎖了 3 月、2 月還開放時，在 2 月補登傳票會改變 3 月底已鎖定的餘額。
+ * explicit = { '2026-03': true }（期間表上標記「已鎖定」的月份）
+ * 回傳 { '2026-01': true, '2026-02': true, '2026-03': true, _through: '2026-03' }
+ * （從開帳月份或最早鎖帳月份起逐月列出；_through 給 isLocked_ 判斷更早的月份）
+ */
+function expandLocks_(explicit, openingDate) {
+  var months = Object.keys(explicit || {}).filter(function (k) { return explicit[k] && isValidPeriod_(k); }).sort();
+  var out = {};
+  if (!months.length) return out;
+  var through = months[months.length - 1];
+  var start = months[0];
+  if (openingDate && isValidPeriod_(String(openingDate).slice(0, 7)) && openingDate.slice(0, 7) < start) start = openingDate.slice(0, 7);
+  var y = Number(start.slice(0, 4)), m = Number(start.slice(5, 7));
+  for (var guard = 0; guard < 1200; guard++) {
+    var k = y + '-' + pad_(m, 2);
+    out[k] = true;
+    if (k >= through) break;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  out._through = through;
+  return out;
+}
+
+/** 某月份是否鎖定（含「被後面月份的鎖帳一起鎖住」） */
+function isLocked_(locked, period) {
+  if (!locked || !period) return false;
+  return !!(locked[period] || (locked._through && period <= locked._through));
+}
+
 /**
  * 檢查傳票
  * ctx = { accountsByCode, openingDate, lockedPeriods: {'2026-01': true} }
@@ -53,7 +86,7 @@ function validateVoucher_(v, ctx) {
   if (!isValidDate_(v.date)) errors.push('日期格式需為 yyyy-MM-dd');
   else {
     if (ctx.openingDate && v.date < ctx.openingDate) errors.push('日期早於開帳日 ' + ctx.openingDate);
-    if (ctx.lockedPeriods && ctx.lockedPeriods[v.date.slice(0, 7)]) errors.push(v.date.slice(0, 7) + ' 已鎖帳，不能新增或修改');
+    if (isLocked_(ctx.lockedPeriods, v.date.slice(0, 7))) errors.push(v.date.slice(0, 7) + ' 已鎖帳，不能新增或修改');
   }
   if (VOUCHER_TYPES.indexOf(v.type) < 0) errors.push('傳票類型需為 收入／支出／轉帳');
   var lines = (v.lines || []).filter(function (l) {

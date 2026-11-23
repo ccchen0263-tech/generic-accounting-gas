@@ -289,7 +289,17 @@ HANDLERS.uploadDoc = function (p, s) {
   var stamp = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyyMMdd-HHmmss');
   var blob = Utilities.newBlob(bytes, type, stamp + '_' + name);
   var file = docFolder_().createFile(blob);
+  // 檔案先存進雲端硬碟；之後任何一步失敗（例如等不到鎖），就把剛存的檔案丟到垃圾桶，不留沒有單據紀錄的孤兒檔
+  var saved = false;
+  try {
+    return uploadDocAfterFile_(file, blob, name, settings, s, function () { saved = true; });
+  } catch (e) {
+    if (!saved) { try { file.setTrashed(true); } catch (e2) { /* 清不掉也不影響錯誤訊息 */ } }
+    throw e;
+  }
+};
 
+function uploadDocAfterFile_(file, blob, name, settings, s, markSaved) {
   // 文字辨識需要幾秒，放在鎖外面，避免卡住其他人
   var ocr = ocrBlob_(blob);
   var parsed = parseReceiptText_(ocr.text, { taxId: settings.taxId, name: settings.companyName });
@@ -312,11 +322,12 @@ HANDLERS.uploadDoc = function (p, s) {
     d.hint = hintText_(d, settings, suggest);
     checkDoc_(d, docCtx_(docs.concat([d])));
     appendObjects_(SHEETS.DOCS, [docToObj_(d)]);
+    markSaved(); // 單據紀錄已寫入，之後失敗也不能刪檔（紀錄會指向這個檔案）
     saveDocText_(d.id, 'Google 雲端硬碟 OCR', ocr.text);
     log_(s.username, '上傳單據', d.id + ' ' + name + (d.total ? ' 金額 ' + d.total : ''));
     return { id: d.id, status: d.status, level: d.level, kind: d.kind, date: d.date, total: d.total, sellerName: d.sellerName, note: d.note };
   });
-};
+}
 
 /** 匯入財政部進項發票檔（前端讀成文字後送來） */
 /**

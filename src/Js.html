@@ -1234,19 +1234,19 @@
   RENDER.periods = function (el) {
     function load() {
       return call('listPeriods').then(function (list) {
-        el.innerHTML = '<div class="notice info">月底結帳後把該月「鎖帳」，鎖帳後該月傳票不能新增、修改或作廢。鎖帳前系統會檢查試算表借貸平衡。只有管理者可以解鎖，且需填寫原因。</div>' +
+        el.innerHTML = '<div class="notice info">月底結帳後把該月「鎖帳」，鎖帳後該月<b>以及之前所有月份</b>的傳票都不能新增、修改或作廢（避免補登前面月份而改到已鎖帳的餘額）。鎖帳前系統會檢查試算表借貸平衡。只有管理者可以解鎖，且需填寫原因；要從最後一個鎖帳月份開始解鎖。</div>' +
           '<div class="card"><div class="table-wrap"><table><thead><tr><th>期間</th><th class="num">傳票數</th><th>狀態</th><th>鎖定人／時間</th><th></th></tr></thead><tbody>' +
           list.map(function (p) {
             var locked = p.status === '已鎖定';
             return '<tr><td>' + esc(p.period) + '</td><td class="num">' + p.vouchers + '</td><td><span class="badge ' + (locked ? 'lock' : 'open') + '">' + (locked ? '已鎖帳' : '開放') + '</span></td>' +
-              '<td class="small muted">' + esc(p.lockedBy) + ' ' + esc(p.lockedAt) + '</td><td class="actions">' +
+              '<td class="small muted">' + (p.implied ? '隨 ' + esc(p.lockedThrough) + ' 一起鎖住' : esc(p.lockedBy) + ' ' + esc(p.lockedAt)) + '</td><td class="actions">' +
               (!locked && can('lockPeriod') ? '<button class="btn small" type="button" data-lock="' + p.period + '">鎖帳</button>' : '') +
-              (locked && can('unlockPeriod') ? '<button class="btn small danger" type="button" data-unlock="' + p.period + '">解鎖</button>' : '') + '</td></tr>';
+              (locked && !p.implied && can('unlockPeriod') ? '<button class="btn small danger" type="button" data-unlock="' + p.period + '">解鎖</button>' : '') + '</td></tr>';
           }).join('') + '</tbody></table></div></div>';
         $all('[data-lock]', el).forEach(function (b) {
           b.onclick = function () {
             var p = b.getAttribute('data-lock');
-            ask('鎖帳 ' + p, '鎖帳後 ' + p + ' 的傳票不能再新增、修改或作廢。建議先完成月底盤點再鎖帳。', { okText: '鎖帳' }).then(function (ok) {
+            ask('鎖帳 ' + p, '鎖帳後 ' + p + ' 以及之前所有月份的傳票都不能再新增、修改或作廢。建議先完成月底盤點再鎖帳。', { okText: '鎖帳' }).then(function (ok) {
               if (!ok) return;
               call('lockPeriod', { period: p }).then(function () { toast(p + ' 已鎖帳'); return refreshBoot().then(load); }).catch(function (e) { toast(e.message, true); });
             });
@@ -1710,7 +1710,7 @@
         '<li>「月底盤點」：輸入各存貨科目的盤點金額，系統自動產生調整傳票，算出本月真正的成本。</li>' +
         '<li>看「損益表」「資產負債表」，確認數字合理；可按「寫入試算表」把報表存到試算表分頁。</li>' +
         '<li>「期間鎖帳」：確認無誤後鎖帳，該月就不能再修改。</li></ol>' +
-        '<h3>傳票寫錯怎麼辦</h3><ul><li>未鎖帳：展開傳票按「修改」或「作廢」（作廢需填原因，號碼不重複使用）。</li><li>已鎖帳：在本月新增一張調整傳票，摘要註明原傳票號碼。需要改舊帳時請管理者解鎖。</li></ul>';
+        '<h3>傳票寫錯怎麼辦</h3><ul><li>未鎖帳：展開傳票按「修改」或「作廢」（作廢需填原因，號碼不重複使用）。修改後舊內容仍保留在試算表「傳票」分頁（狀態「已修改」），不會計入帳上。日期要改到別的月份時，請作廢後用「複製成新傳票」重新新增。</li><li>已鎖帳：在本月新增一張調整傳票，摘要註明原傳票號碼。需要改舊帳時請管理者解鎖。</li></ul>';
       if (S.boot.user.groupRole === '管理者') {
         h += '<h3>集團管理者</h3><ul><li>「公司管理」：新增公司（自動建立該公司的試算表與建議科目）、改名、停用。</li>' +
           '<li>「帳號與權限」：每個人可以設定在每家公司的角色，例如在公版餐飲是會計、在公版食品是助理。</li>' +

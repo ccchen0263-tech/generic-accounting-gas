@@ -5,7 +5,27 @@
  * 目前這次操作所屬的公司（由 api() 依登入者與切換的公司設定）
  * company = { id, name, spreadsheetId }；null 代表集團主檔本身
  */
-var CTX = { company: null, ssCache: {} };
+var CTX = { company: null, ssCache: {}, memo: null, lockDepth: 0 };
+
+/**
+ * 同一次 API 呼叫內的讀取暫存（api() 開始時建立、結束時清掉）：
+ * 同一張工作表在一次操作中只讀一次；任何寫入都會清掉該表的暫存；
+ * 取得鎖（withLock_）時整個清空，確保鎖內一定讀到最新資料。
+ */
+function beginRequestMemo_() {
+  CTX.memo = { tables: {}, hubId: '' };
+  CTX.lockDepth = 0;
+}
+
+function endRequestMemo_() {
+  CTX.memo = null;
+  CTX.lockDepth = 0;
+}
+
+/** 帳號、公司清單、公司權限：每次 API 都要查，存在 CacheService 共用（寫入時立即清除；直接改試算表最多 60 秒後生效） */
+var TABLE_CACHE_SHEETS = ['公司清單', '_帳號', '_公司權限'];
+var TABLE_CACHE_SECONDS = 60;
+var TABLE_CACHE_PREFIX = 'tbl1_';
 
 /** 集團主檔：程式綁定的那份試算表 */
 function hubSs_() {
@@ -42,13 +62,66 @@ function sheet_(name) {
   return sh;
 }
 
-/** 讀整張表：回傳 { headers, rows }，rows 為二維陣列（不含標題列） */
+/** 讀整張表：回傳 { headers, rows }，rows 為二維陣列（不含標題列）。回傳值請當唯讀使用（會被暫存共用） */
 function readTable_(name) {
+  var key = CTX.memo ? memoKey_(name) : '';
+  if (key && CTX.memo.tables[key]) return CTX.memo.tables[key];
+  var shared = TABLE_CACHE_SHEETS.indexOf(name) >= 0;
+  // 鎖內不用共用暫存，一定讀試算表
+  var t = shared && !CTX.lockDepth ? getCachedTable_(name) : null;
+  if (!t) {
+    t = readSheetTable_(name);
+    if (shared) putCachedTable_(name, t);
+  }
+  if (key) CTX.memo.tables[key] = t;
+  return t;
+}
+
+function readSheetTable_(name) {
   var sh = sheet_(name);
   var lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
   if (lastRow < 1 || lastCol < 1) return { headers: HEADERS[name].slice(), rows: [] };
   var values = sh.getRange(1, 1, lastRow, lastCol).getValues();
   return { headers: values[0].map(String), rows: values.slice(1) };
+}
+
+/** 暫存的鍵：試算表 ID＋工作表名稱（集團主檔本身也是第一家公司，用同一個 ID 才不會重複） */
+function memoKey_(name) {
+  if (!CTX.memo.hubId) CTX.memo.hubId = hubSs_().getId();
+  var ssId = HUB_SHEETS.indexOf(name) >= 0 || !CTX.company ? CTX.memo.hubId : CTX.company.spreadsheetId;
+  return ssId + '|' + name;
+}
+
+function getCachedTable_(name) {
+  try {
+    var raw = CacheService.getScriptCache().get(TABLE_CACHE_PREFIX + name);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function putCachedTable_(name, t) {
+  try {
+    // 日期物件先轉成文字（讀取端一律用 str_ 處理，結果相同）
+    var rows = t.rows.map(function (r) { return r.map(function (v) { return Object.prototype.toString.call(v) === '[object Date]' ? str_(v) : v; }); });
+    var raw = JSON.stringify({ headers: t.headers, rows: rows });
+    if (raw.length < 90000) CacheService.getScriptCache().put(TABLE_CACHE_PREFIX + name, raw, TABLE_CACHE_SECONDS);
+  } catch (e) { /* 暫存失敗不影響讀取 */ }
+}
+
+/** 寫入後清掉暫存（本次呼叫的暫存與共用暫存） */
+function invalidateTable_(name) {
+  if (CTX.memo) delete CTX.memo.tables[memoKey_(name)];
+  if (TABLE_CACHE_SHEETS.indexOf(name) >= 0) {
+    try { CacheService.getScriptCache().remove(TABLE_CACHE_PREFIX + name); } catch (e) { /* 忽略 */ }
+  }
+}
+
+/** 建立或改動工作表結構時：清掉本次呼叫所有讀取暫存 */
+function invalidateAllTables_() {
+  if (CTX.memo) CTX.memo.tables = {};
+  TABLE_CACHE_SHEETS.forEach(function (n) {
+    try { CacheService.getScriptCache().remove(TABLE_CACHE_PREFIX + n); } catch (e) { /* 忽略 */ }
+  });
 }
 
 /** 讀成物件陣列，key 為中文欄名，並附上 _row（試算表列號） */
@@ -82,9 +155,11 @@ function appendObjects_(name, objs) {
   if (!objs.length) return;
   var sh = sheet_(name);
   var rows = objs.map(function (o) { return toRow_(name, o); });
-  var start = sh.getLastRow() + 1;
-  ensureRows_(sh, name, start + rows.length - 1);
-  sh.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+  try {
+    var start = sh.getLastRow() + 1;
+    ensureRows_(sh, name, start + rows.length - 1);
+    sh.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+  } finally { invalidateTable_(name); }
 }
 
 /** 列數不夠時一次多加 500 列，並把文字欄位設為純文字格式 */
@@ -102,13 +177,44 @@ function ensureRows_(sh, name, lastNeeded) {
 
 /** 更新指定列的部分欄位 */
 function updateCells_(name, rowNumber, patch) {
+  updateCellsMany_(name, [rowNumber], patch);
+}
+
+/**
+ * 多列套用同一組欄位值（例如作廢一張傳票的每一行）。
+ * 標題只讀一次；相鄰的列、相鄰的欄合併成一次寫入；只寫 patch 裡的欄位，其他欄位不動。
+ */
+function updateCellsMany_(name, rowNumbers, patch) {
+  if (!rowNumbers || !rowNumbers.length) return;
   var sh = sheet_(name);
   var headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
-  Object.keys(patch).forEach(function (h) {
+  var cols = Object.keys(patch).map(function (h) {
     var col = headers.indexOf(h);
     if (col < 0) throw new Error('欄位「' + h + '」不存在');
-    sh.getRange(rowNumber, col + 1, 1, 1).setValues([[cellValue_(patch[h])]]);
+    return { col: col + 1, value: cellValue_(patch[h]) };
+  }).sort(function (a, b) { return a.col - b.col; });
+  var colRuns = [];
+  cols.forEach(function (c) {
+    var last = colRuns[colRuns.length - 1];
+    if (last && last.start + last.values.length === c.col) last.values.push(c.value);
+    else colRuns.push({ start: c.col, values: [c.value] });
   });
+  var rows = rowNumbers.map(Number).filter(function (r, i, a) { return r >= 2 && a.indexOf(r) === i; }).sort(function (a, b) { return a - b; });
+  var rowRuns = [];
+  rows.forEach(function (r) {
+    var last = rowRuns[rowRuns.length - 1];
+    if (last && last.start + last.count === r) last.count++;
+    else rowRuns.push({ start: r, count: 1 });
+  });
+  try {
+    rowRuns.forEach(function (rr) {
+      colRuns.forEach(function (cr) {
+        var data = [];
+        for (var i = 0; i < rr.count; i++) data.push(cr.values.slice());
+        sh.getRange(rr.start, cr.start, rr.count, cr.values.length).setValues(data);
+      });
+    });
+  } finally { invalidateTable_(name); }
 }
 
 /**
@@ -121,8 +227,8 @@ function updateRow_(name, rowNumber, obj) {
   var headers = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
   var range = sh.getRange(rowNumber, 1, 1, width);
   var row = range.getValues()[0];
-  headers.forEach(function (h, i) { if (Object.prototype.hasOwnProperty.call(obj, h)) row[i] = cellValue_(obj[h]); });
-  range.setValues([row]);
+  headers.forEach(function (h, i) { if (Object.prototype.hasOwnProperty.call(obj, h)) row[i] = cellValue_(obj[h]); else row[i] = cellValue_(row[i]); });
+  try { range.setValues([row]); } finally { invalidateTable_(name); }
 }
 
 /** 刪除指定列（由下往上刪，連續列一次刪） */
@@ -131,24 +237,28 @@ function deleteRowNumbers_(name, rowNumbers) {
   var sh = sheet_(name);
   var sorted = rowNumbers.slice().sort(function (a, b) { return b - a; });
   var i = 0;
-  while (i < sorted.length) {
-    var end = sorted[i], start = end, j = i + 1;
-    while (j < sorted.length && sorted[j] === start - 1) { start = sorted[j]; j++; }
-    sh.deleteRows(start, end - start + 1);
-    i = j;
-  }
+  try {
+    while (i < sorted.length) {
+      var end = sorted[i], start = end, j = i + 1;
+      while (j < sorted.length && sorted[j] === start - 1) { start = sorted[j]; j++; }
+      sh.deleteRows(start, end - start + 1);
+      i = j;
+    }
+  } finally { invalidateTable_(name); }
 }
 
 /** 清空資料列並整批寫入 */
 function replaceAll_(name, objs) {
   var sh = sheet_(name);
   var last = sh.getLastRow();
-  if (last > 1) sh.getRange(2, 1, last - 1, HEADERS[name].length).clearContent();
-  if (objs.length) {
-    var rows = objs.map(function (o) { return toRow_(name, o); });
-    ensureRows_(sh, name, rows.length + 1);
-    sh.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
-  }
+  try {
+    if (last > 1) sh.getRange(2, 1, last - 1, HEADERS[name].length).clearContent();
+    if (objs.length) {
+      var rows = objs.map(function (o) { return toRow_(name, o); });
+      ensureRows_(sh, name, rows.length + 1);
+      sh.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+    }
+  } finally { invalidateTable_(name); }
 }
 
 function nowText_() {
@@ -162,7 +272,14 @@ function todayText_() {
 function withLock_(fn) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
-  try { return fn(); } finally { lock.releaseLock(); }
+  // 鎖內一律重新讀取（別人可能在我們拿到鎖之前改過資料）
+  CTX.lockDepth = (CTX.lockDepth || 0) + 1;
+  if (CTX.memo) CTX.memo.tables = {};
+  try { return fn(); } finally {
+    CTX.lockDepth--;
+    if (CTX.memo) CTX.memo.tables = {};
+    lock.releaseLock();
+  }
 }
 
 // ───────────── 公司設定 ─────────────
@@ -253,8 +370,17 @@ function lineFromObj_(o) {
   };
 }
 
+/**
+ * 目前有效的傳票分錄（含作廢，供傳票列表顯示）。
+ * 狀態「已修改」的列是修改前的舊內容：保留在試算表供查核，不屬於任何帳簿與報表，這裡一律排除。
+ */
 function loadLines_() {
-  return readObjects_(SHEETS.VOUCHERS).map(lineFromObj_).filter(function (l) { return l.no; });
+  return readObjects_(SHEETS.VOUCHERS).map(lineFromObj_).filter(function (l) { return l.no && l.status !== VOUCHER_SUPERSEDED; });
+}
+
+/** 修改前的舊分錄（查核用） */
+function loadSupersededLines_(no) {
+  return readObjects_(SHEETS.VOUCHERS).map(lineFromObj_).filter(function (l) { return l.no === no && l.status === VOUCHER_SUPERSEDED; });
 }
 
 // ───────────── 期間 ─────────────
@@ -265,10 +391,16 @@ function loadPeriods_() {
   }).filter(function (p) { return p.period; });
 }
 
-function lockedPeriodsMap_() {
+/** 標記為「已鎖定」的月份（期間表上實際的紀錄） */
+function explicitLocks_() {
   var m = {};
   loadPeriods_().forEach(function (p) { if (p.status === '已鎖定') m[p.period] = true; });
   return m;
+}
+
+/** 實際鎖定的月份：最晚鎖帳月份（含）以前全部鎖定，見 expandLocks_ */
+function lockedPeriodsMap_() {
+  return expandLocks_(explicitLocks_(), loadSettings_().openingDate);
 }
 
 // ───────────── 操作紀錄 ─────────────
