@@ -125,7 +125,7 @@ at(F, 'saveOpening', { rows: [
   { code: '1431', debit: 1500000 }, { code: '1432', credit: 300000 }, { code: '1811', debit: 200000 },
   { code: '2131', credit: 150000 }, { code: '3111', credit: 2000000 }, { code: '3351', credit: 360000 }
 ] });
-const customersF = ['公版餐飲有限公司', '晨光超市', '好食團膳'];
+const customersF = ['公版餐飲有限公司', '示範超市', '好食團膳'];
 let apF = 150000, arPrev = 0;
 for (let m = 1; m <= LAST_MONTH; m++) {
   const s = season[m];
@@ -134,7 +134,7 @@ for (let m = 1; m <= LAST_MONTH; m++) {
   { const a = vary(42000, 0.15); ap += a; T(F, dayOf(m, 6), 'f-pack', a, '包材進貨－和風包材', '和風包材'); }
   { const a = vary(178500 * s, 0.12); ap += a; T(F, dayOf(m, 9), 'f-goods', a, '選品進貨－山海選物', '山海選物'); }
   customersF.forEach((c, i) => { const a = vary([315000, 378000, 231000][i] * s, 0.1); ar += a; T(F, dayOf(m, 12 + i * 5), 'f-sale-own', a, `自製產品銷貨－${c}`, c); });
-  { const a = vary(273000 * s, 0.1); ar += a; T(F, dayOf(m, 26), 'f-sale-goods', a, '選品銷貨－晨光超市', '晨光超市'); }
+  { const a = vary(273000 * s, 0.1); ar += a; T(F, dayOf(m, 26), 'f-sale-goods', a, '選品銷貨－示範超市', '示範超市'); }
   T(F, dayOf(m, 27), 'f-ec-own', vary(157500 * s, 0.15), `${m}月電商銷售（自製）`);
   T(F, dayOf(m, 27), 'f-ec-goods', vary(84000 * s, 0.15), `${m}月電商銷售（選品）`);
   if (m > 1) {

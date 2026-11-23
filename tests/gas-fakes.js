@@ -56,6 +56,7 @@
     if (r < 1 || c < 1 || nr < 1 || nc < 1) throw new Error('範圍不正確');
     if (r + nr - 1 > sheet.maxRows || c + nc - 1 > sheet.maxCols) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
     this.getValues = function () {
+      sheet.reads = (sheet.reads || 0) + 1; // 測試用：讀取次數
       var out = [];
       for (var i = 0; i < nr; i++) {
         var row = [];
@@ -69,6 +70,7 @@
     };
     this.setValues = function (vals) {
       if (vals.length !== nr || vals[0].length !== nc) throw new Error('資料大小與範圍不符');
+      sheet.writes = (sheet.writes || 0) + 1; // 測試用：寫入次數
       for (var i = 0; i < nr; i++) {
         var rowIdx = r - 1 + i;
         while (sheet.data.length <= rowIdx) sheet.data.push([]);
@@ -155,6 +157,7 @@
     ss.toast = function (m) { ui.toasts.push(String(m)); };
     var clock = { now: options.now || null };
     var uuidCounter = 0;
+    var lockState = { held: 0, acquired: 0, fail: false };
     var session = { email: options.email === undefined ? 'owner@example.com' : options.email, effective: 'owner@example.com' };
 
     function nowDate() { return clock.now ? new Date(clock.now) : new Date(); }
@@ -167,7 +170,7 @@
         .replace('HH', p(d.getUTCHours())).replace('mm', p(d.getUTCMinutes())).replace('ss', p(d.getUTCSeconds()));
     }
 
-    var drive = { seq: 0, files: {}, folders: {}, docs: {}, ocrQueue: [], ocrCalls: [], removed: [] };
+    var drive = { seq: 0, files: {}, folders: {}, docs: {}, ocrQueue: [], ocrCalls: [], removed: [], trashed: [] };
     function makeBlob(bytes, type, name) {
       return {
         getBytes: function () { return bytes.slice(); }, getContentType: function () { return type; },
@@ -189,7 +192,7 @@
             getId: function () { return fid; }, getName: function () { return blob.getName(); },
             getBlob: function () { return blob; }, getMimeType: function () { return blob.getContentType(); },
             getThumbnail: function () { return makeBlob([1, 2, 3], 'image/png', 'thumb.png'); },
-            setTrashed: function () { return this; }
+            setTrashed: function (v) { if (v) drive.trashed.push(fid); return this; }
           };
           drive.files[fid] = file;
           return file;
@@ -225,7 +228,13 @@
         }
       },
       LockService: {
-        getScriptLock: function () { return { waitLock: function () {}, releaseLock: function () {} }; }
+        // 測試用：記錄目前是否持有鎖、取得幾次；lockState.fail 設為 true 時模擬等不到鎖
+        getScriptLock: function () {
+          return {
+            waitLock: function () { if (lockState.fail) throw new Error('Lock timeout: another process was holding the lock for too long.'); lockState.held++; lockState.acquired++; },
+            releaseLock: function () { if (lockState.held > 0) lockState.held--; }
+          };
+        }
       },
       Utilities: {
         DigestAlgorithm: { SHA_256: 'SHA_256' },
@@ -282,7 +291,7 @@
       HtmlService: {},
       // 測試輔助
       __ss: ss, __registry: registry, __props: props, __cache: cache, __logs: logs, __ui: ui, __clock: clock, __sha256: sha256Bytes,
-      __nowDate: nowDate, __session: session, __drive: drive
+      __nowDate: nowDate, __session: session, __drive: drive, __lock: lockState
     };
     // 讓 new Date() 也能固定時間：測試透過 Utilities.formatDate(new Date()) 取得今天，因此改寫 formatDate 的輸入
     var realFormat = env.Utilities.formatDate;

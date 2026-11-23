@@ -1,5 +1,5 @@
 /**
- * 公版會計系統 v0.4.0（手動貼上版，由 tools/build-dist.js 產生，請勿直接修改）
+ * 公版會計系統 v0.5.0（手動貼上版，由 tools/build-dist.js 產生，請勿直接修改）
  * 原始碼：https://github.com/ccchen0263-tech/generic-accounting-gas
  */
 // ===== 00_Config.js =====
@@ -9,7 +9,7 @@
  */
 var APP = {
   name: '公版會計系統',   // 預設名稱；各客戶可在「公司管理」改成自己的系統名稱（存在指令碼屬性 APP_NAME）
-  version: '0.4.0'
+  version: '0.5.0'
 };
 
 var SHEETS = {
@@ -103,6 +103,11 @@ var BLOCKS = {
 };
 
 var VOUCHER_TYPES = ['收入', '支出', '轉帳'];
+/**
+ * 傳票分錄的狀態：有效、作廢（整張作廢，仍顯示在傳票列表）、已修改（修改前的舊內容，只留在試算表供查核）
+ * 修改傳票時舊列不刪除，改標「已修改」，修改者／修改時間＝被取代的人與時間；同號碼、修改時間相同的有效列就是新版本。
+ */
+var VOUCHER_SUPERSEDED = '已修改';
 
 /** 在某家公司的角色 */
 var ROLES = ['管理者', '會計', '助理'];
@@ -160,9 +165,17 @@ var GROUP_ACTIONS = ['listUsers', 'saveUser', 'resetPassword', 'listLog', 'listC
 /** 集團報表：可看「自己是管理者或會計」的公司，至少兩家才顯示 */
 var CONSOLIDATED_ROLES = ['管理者', '會計'];
 
+/** 同一個瀏覽器錯 5 次 → 這個瀏覽器鎖 10 分鐘 */
 var LOGIN_MAX_FAILS = 5;
 var LOGIN_LOCK_SECONDS = 600;
-var LOGIN_GLOBAL_SLOWDOWN = 20;
+/** 同一個帳號（不分瀏覽器）錯 10 次 → 這個帳號暫停登入 15 分鐘；管理者重設密碼後立即解除 */
+var LOGIN_USER_MAX_FAILS = 10;
+var LOGIN_USER_LOCK_SECONDS = 900;
+/**
+ * 密碼雜湊：SHA-256 反覆計算的次數（越多越難暴力破解，但登入越慢）。
+ * 次數記在雜湊值裡（v2$次數$雜湊），之後調整次數不影響舊密碼；使用者下次登入時自動改用新次數。
+ */
+var PW_ITERATIONS = 3000;
 var SESSION_SECONDS = 21600; // 6 小時
 
 // ===== 01_Util.js =====
@@ -510,6 +523,39 @@ function activeLines_(lines) {
   return lines.filter(function (l) { return l.status !== '作廢'; });
 }
 
+// ───────────── 鎖帳 ─────────────
+
+/**
+ * 鎖帳是「累計」的：最晚一個已鎖帳月份（含）以前的月份全部視為鎖定。
+ * 否則鎖了 3 月、2 月還開放時，在 2 月補登傳票會改變 3 月底已鎖定的餘額。
+ * explicit = { '2026-03': true }（期間表上標記「已鎖定」的月份）
+ * 回傳 { '2026-01': true, '2026-02': true, '2026-03': true, _through: '2026-03' }
+ * （從開帳月份或最早鎖帳月份起逐月列出；_through 給 isLocked_ 判斷更早的月份）
+ */
+function expandLocks_(explicit, openingDate) {
+  var months = Object.keys(explicit || {}).filter(function (k) { return explicit[k] && isValidPeriod_(k); }).sort();
+  var out = {};
+  if (!months.length) return out;
+  var through = months[months.length - 1];
+  var start = months[0];
+  if (openingDate && isValidPeriod_(String(openingDate).slice(0, 7)) && openingDate.slice(0, 7) < start) start = openingDate.slice(0, 7);
+  var y = Number(start.slice(0, 4)), m = Number(start.slice(5, 7));
+  for (var guard = 0; guard < 1200; guard++) {
+    var k = y + '-' + pad_(m, 2);
+    out[k] = true;
+    if (k >= through) break;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  out._through = through;
+  return out;
+}
+
+/** 某月份是否鎖定（含「被後面月份的鎖帳一起鎖住」） */
+function isLocked_(locked, period) {
+  if (!locked || !period) return false;
+  return !!(locked[period] || (locked._through && period <= locked._through));
+}
+
 /**
  * 檢查傳票
  * ctx = { accountsByCode, openingDate, lockedPeriods: {'2026-01': true} }
@@ -519,7 +565,7 @@ function validateVoucher_(v, ctx) {
   if (!isValidDate_(v.date)) errors.push('日期格式需為 yyyy-MM-dd');
   else {
     if (ctx.openingDate && v.date < ctx.openingDate) errors.push('日期早於開帳日 ' + ctx.openingDate);
-    if (ctx.lockedPeriods && ctx.lockedPeriods[v.date.slice(0, 7)]) errors.push(v.date.slice(0, 7) + ' 已鎖帳，不能新增或修改');
+    if (isLocked_(ctx.lockedPeriods, v.date.slice(0, 7))) errors.push(v.date.slice(0, 7) + ' 已鎖帳，不能新增或修改');
   }
   if (VOUCHER_TYPES.indexOf(v.type) < 0) errors.push('傳票類型需為 收入／支出／轉帳');
   var lines = (v.lines || []).filter(function (l) {
@@ -1287,7 +1333,7 @@ function validateDoc_(d, ctx) {
   if (d.date && isValidDate_(d.date) && open) {
     if (ctx.today && d.date > ctx.today) add('DATE_FUTURE', '錯誤', 'date', '日期在今天之後');
     if (ctx.openingDate && d.date < ctx.openingDate) add('DATE_BEFORE_OPENING', '錯誤', 'date', '日期早於開帳日 ' + ctx.openingDate);
-    if (ctx.lockedPeriods && ctx.lockedPeriods[d.date.slice(0, 7)]) add('PERIOD_LOCKED', '錯誤', 'date', d.date.slice(0, 7) + ' 已鎖帳');
+    if (isLocked_(ctx.lockedPeriods, d.date.slice(0, 7))) add('PERIOD_LOCKED', '錯誤', 'date', d.date.slice(0, 7) + ' 已鎖帳');
   }
 
   var idx = ctx.index || { byInv: {}, bySuspect: {} };
@@ -1368,7 +1414,7 @@ var INVOICE_COLUMNS = {
  * 欄位以標題名稱對應（不固定欄位順序），也支援手機條碼載具的「M|…」格式。
  * 回傳 { rows: [...], skipped: [...說明] }
  */
-/** 統編被 Excel 去掉開頭的 0（00573951 → 573951）時補回 8 碼 */
+/** 統編被 Excel 去掉開頭的 0（00123404 → 123404）時補回 8 碼 */
 function taxId8_(v) {
   var t = str_(v).replace(/\s/g, '');
   return /^\d{1,7}$/.test(t) ? ('0000000' + t).slice(-8) : t;
@@ -1595,7 +1641,27 @@ function applyTemplate_(tpl, amount) {
  * 目前這次操作所屬的公司（由 api() 依登入者與切換的公司設定）
  * company = { id, name, spreadsheetId }；null 代表集團主檔本身
  */
-var CTX = { company: null, ssCache: {} };
+var CTX = { company: null, ssCache: {}, memo: null, lockDepth: 0 };
+
+/**
+ * 同一次 API 呼叫內的讀取暫存（api() 開始時建立、結束時清掉）：
+ * 同一張工作表在一次操作中只讀一次；任何寫入都會清掉該表的暫存；
+ * 取得鎖（withLock_）時整個清空，確保鎖內一定讀到最新資料。
+ */
+function beginRequestMemo_() {
+  CTX.memo = { tables: {}, hubId: '' };
+  CTX.lockDepth = 0;
+}
+
+function endRequestMemo_() {
+  CTX.memo = null;
+  CTX.lockDepth = 0;
+}
+
+/** 帳號、公司清單、公司權限：每次 API 都要查，存在 CacheService 共用（寫入時立即清除；直接改試算表最多 60 秒後生效） */
+var TABLE_CACHE_SHEETS = ['公司清單', '_帳號', '_公司權限'];
+var TABLE_CACHE_SECONDS = 60;
+var TABLE_CACHE_PREFIX = 'tbl1_';
 
 /** 集團主檔：程式綁定的那份試算表 */
 function hubSs_() {
@@ -1632,13 +1698,66 @@ function sheet_(name) {
   return sh;
 }
 
-/** 讀整張表：回傳 { headers, rows }，rows 為二維陣列（不含標題列） */
+/** 讀整張表：回傳 { headers, rows }，rows 為二維陣列（不含標題列）。回傳值請當唯讀使用（會被暫存共用） */
 function readTable_(name) {
+  var key = CTX.memo ? memoKey_(name) : '';
+  if (key && CTX.memo.tables[key]) return CTX.memo.tables[key];
+  var shared = TABLE_CACHE_SHEETS.indexOf(name) >= 0;
+  // 鎖內不用共用暫存，一定讀試算表
+  var t = shared && !CTX.lockDepth ? getCachedTable_(name) : null;
+  if (!t) {
+    t = readSheetTable_(name);
+    if (shared) putCachedTable_(name, t);
+  }
+  if (key) CTX.memo.tables[key] = t;
+  return t;
+}
+
+function readSheetTable_(name) {
   var sh = sheet_(name);
   var lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
   if (lastRow < 1 || lastCol < 1) return { headers: HEADERS[name].slice(), rows: [] };
   var values = sh.getRange(1, 1, lastRow, lastCol).getValues();
   return { headers: values[0].map(String), rows: values.slice(1) };
+}
+
+/** 暫存的鍵：試算表 ID＋工作表名稱（集團主檔本身也是第一家公司，用同一個 ID 才不會重複） */
+function memoKey_(name) {
+  if (!CTX.memo.hubId) CTX.memo.hubId = hubSs_().getId();
+  var ssId = HUB_SHEETS.indexOf(name) >= 0 || !CTX.company ? CTX.memo.hubId : CTX.company.spreadsheetId;
+  return ssId + '|' + name;
+}
+
+function getCachedTable_(name) {
+  try {
+    var raw = CacheService.getScriptCache().get(TABLE_CACHE_PREFIX + name);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function putCachedTable_(name, t) {
+  try {
+    // 日期物件先轉成文字（讀取端一律用 str_ 處理，結果相同）
+    var rows = t.rows.map(function (r) { return r.map(function (v) { return Object.prototype.toString.call(v) === '[object Date]' ? str_(v) : v; }); });
+    var raw = JSON.stringify({ headers: t.headers, rows: rows });
+    if (raw.length < 90000) CacheService.getScriptCache().put(TABLE_CACHE_PREFIX + name, raw, TABLE_CACHE_SECONDS);
+  } catch (e) { /* 暫存失敗不影響讀取 */ }
+}
+
+/** 寫入後清掉暫存（本次呼叫的暫存與共用暫存） */
+function invalidateTable_(name) {
+  if (CTX.memo) delete CTX.memo.tables[memoKey_(name)];
+  if (TABLE_CACHE_SHEETS.indexOf(name) >= 0) {
+    try { CacheService.getScriptCache().remove(TABLE_CACHE_PREFIX + name); } catch (e) { /* 忽略 */ }
+  }
+}
+
+/** 建立或改動工作表結構時：清掉本次呼叫所有讀取暫存 */
+function invalidateAllTables_() {
+  if (CTX.memo) CTX.memo.tables = {};
+  TABLE_CACHE_SHEETS.forEach(function (n) {
+    try { CacheService.getScriptCache().remove(TABLE_CACHE_PREFIX + n); } catch (e) { /* 忽略 */ }
+  });
 }
 
 /** 讀成物件陣列，key 為中文欄名，並附上 _row（試算表列號） */
@@ -1672,9 +1791,11 @@ function appendObjects_(name, objs) {
   if (!objs.length) return;
   var sh = sheet_(name);
   var rows = objs.map(function (o) { return toRow_(name, o); });
-  var start = sh.getLastRow() + 1;
-  ensureRows_(sh, name, start + rows.length - 1);
-  sh.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+  try {
+    var start = sh.getLastRow() + 1;
+    ensureRows_(sh, name, start + rows.length - 1);
+    sh.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+  } finally { invalidateTable_(name); }
 }
 
 /** 列數不夠時一次多加 500 列，並把文字欄位設為純文字格式 */
@@ -1692,13 +1813,44 @@ function ensureRows_(sh, name, lastNeeded) {
 
 /** 更新指定列的部分欄位 */
 function updateCells_(name, rowNumber, patch) {
+  updateCellsMany_(name, [rowNumber], patch);
+}
+
+/**
+ * 多列套用同一組欄位值（例如作廢一張傳票的每一行）。
+ * 標題只讀一次；相鄰的列、相鄰的欄合併成一次寫入；只寫 patch 裡的欄位，其他欄位不動。
+ */
+function updateCellsMany_(name, rowNumbers, patch) {
+  if (!rowNumbers || !rowNumbers.length) return;
   var sh = sheet_(name);
   var headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
-  Object.keys(patch).forEach(function (h) {
+  var cols = Object.keys(patch).map(function (h) {
     var col = headers.indexOf(h);
     if (col < 0) throw new Error('欄位「' + h + '」不存在');
-    sh.getRange(rowNumber, col + 1, 1, 1).setValues([[cellValue_(patch[h])]]);
+    return { col: col + 1, value: cellValue_(patch[h]) };
+  }).sort(function (a, b) { return a.col - b.col; });
+  var colRuns = [];
+  cols.forEach(function (c) {
+    var last = colRuns[colRuns.length - 1];
+    if (last && last.start + last.values.length === c.col) last.values.push(c.value);
+    else colRuns.push({ start: c.col, values: [c.value] });
   });
+  var rows = rowNumbers.map(Number).filter(function (r, i, a) { return r >= 2 && a.indexOf(r) === i; }).sort(function (a, b) { return a - b; });
+  var rowRuns = [];
+  rows.forEach(function (r) {
+    var last = rowRuns[rowRuns.length - 1];
+    if (last && last.start + last.count === r) last.count++;
+    else rowRuns.push({ start: r, count: 1 });
+  });
+  try {
+    rowRuns.forEach(function (rr) {
+      colRuns.forEach(function (cr) {
+        var data = [];
+        for (var i = 0; i < rr.count; i++) data.push(cr.values.slice());
+        sh.getRange(rr.start, cr.start, rr.count, cr.values.length).setValues(data);
+      });
+    });
+  } finally { invalidateTable_(name); }
 }
 
 /**
@@ -1711,8 +1863,8 @@ function updateRow_(name, rowNumber, obj) {
   var headers = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
   var range = sh.getRange(rowNumber, 1, 1, width);
   var row = range.getValues()[0];
-  headers.forEach(function (h, i) { if (Object.prototype.hasOwnProperty.call(obj, h)) row[i] = cellValue_(obj[h]); });
-  range.setValues([row]);
+  headers.forEach(function (h, i) { if (Object.prototype.hasOwnProperty.call(obj, h)) row[i] = cellValue_(obj[h]); else row[i] = cellValue_(row[i]); });
+  try { range.setValues([row]); } finally { invalidateTable_(name); }
 }
 
 /** 刪除指定列（由下往上刪，連續列一次刪） */
@@ -1721,24 +1873,28 @@ function deleteRowNumbers_(name, rowNumbers) {
   var sh = sheet_(name);
   var sorted = rowNumbers.slice().sort(function (a, b) { return b - a; });
   var i = 0;
-  while (i < sorted.length) {
-    var end = sorted[i], start = end, j = i + 1;
-    while (j < sorted.length && sorted[j] === start - 1) { start = sorted[j]; j++; }
-    sh.deleteRows(start, end - start + 1);
-    i = j;
-  }
+  try {
+    while (i < sorted.length) {
+      var end = sorted[i], start = end, j = i + 1;
+      while (j < sorted.length && sorted[j] === start - 1) { start = sorted[j]; j++; }
+      sh.deleteRows(start, end - start + 1);
+      i = j;
+    }
+  } finally { invalidateTable_(name); }
 }
 
 /** 清空資料列並整批寫入 */
 function replaceAll_(name, objs) {
   var sh = sheet_(name);
   var last = sh.getLastRow();
-  if (last > 1) sh.getRange(2, 1, last - 1, HEADERS[name].length).clearContent();
-  if (objs.length) {
-    var rows = objs.map(function (o) { return toRow_(name, o); });
-    ensureRows_(sh, name, rows.length + 1);
-    sh.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
-  }
+  try {
+    if (last > 1) sh.getRange(2, 1, last - 1, HEADERS[name].length).clearContent();
+    if (objs.length) {
+      var rows = objs.map(function (o) { return toRow_(name, o); });
+      ensureRows_(sh, name, rows.length + 1);
+      sh.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+    }
+  } finally { invalidateTable_(name); }
 }
 
 function nowText_() {
@@ -1752,7 +1908,14 @@ function todayText_() {
 function withLock_(fn) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
-  try { return fn(); } finally { lock.releaseLock(); }
+  // 鎖內一律重新讀取（別人可能在我們拿到鎖之前改過資料）
+  CTX.lockDepth = (CTX.lockDepth || 0) + 1;
+  if (CTX.memo) CTX.memo.tables = {};
+  try { return fn(); } finally {
+    CTX.lockDepth--;
+    if (CTX.memo) CTX.memo.tables = {};
+    lock.releaseLock();
+  }
 }
 
 // ───────────── 公司設定 ─────────────
@@ -1843,8 +2006,17 @@ function lineFromObj_(o) {
   };
 }
 
+/**
+ * 目前有效的傳票分錄（含作廢，供傳票列表顯示）。
+ * 狀態「已修改」的列是修改前的舊內容：保留在試算表供查核，不屬於任何帳簿與報表，這裡一律排除。
+ */
 function loadLines_() {
-  return readObjects_(SHEETS.VOUCHERS).map(lineFromObj_).filter(function (l) { return l.no; });
+  return readObjects_(SHEETS.VOUCHERS).map(lineFromObj_).filter(function (l) { return l.no && l.status !== VOUCHER_SUPERSEDED; });
+}
+
+/** 修改前的舊分錄（查核用） */
+function loadSupersededLines_(no) {
+  return readObjects_(SHEETS.VOUCHERS).map(lineFromObj_).filter(function (l) { return l.no === no && l.status === VOUCHER_SUPERSEDED; });
 }
 
 // ───────────── 期間 ─────────────
@@ -1855,10 +2027,16 @@ function loadPeriods_() {
   }).filter(function (p) { return p.period; });
 }
 
-function lockedPeriodsMap_() {
+/** 標記為「已鎖定」的月份（期間表上實際的紀錄） */
+function explicitLocks_() {
   var m = {};
   loadPeriods_().forEach(function (p) { if (p.status === '已鎖定') m[p.period] = true; });
   return m;
+}
+
+/** 實際鎖定的月份：最晚鎖帳月份（含）以前全部鎖定，見 expandLocks_ */
+function lockedPeriodsMap_() {
+  return expandLocks_(explicitLocks_(), loadSettings_().openingDate);
 }
 
 // ───────────── 操作紀錄 ─────────────
@@ -1874,11 +2052,45 @@ function log_(user, action, detail) {
 // ===== 30_Auth.js =====
 /**
  * 帳號、登入、權限
- * 密碼只存 SHA-256(鹽|密碼)，不存明碼；登入憑證放 CacheService 6 小時
+ * 密碼不存明碼。雜湊格式：
+ *   舊版（v1）：SHA-256(鹽|密碼) 的 64 碼十六進位
+ *   新版（v2）：「v2$次數$雜湊」＝ v1 結果再反覆 SHA-256 共「次數」次（PW_ITERATIONS）
+ * 舊版雜湊照樣可以登入，登入成功時自動改存新版（使用者不用做任何事）。
+ * 登入憑證放 CacheService 6 小時。
  */
 function hashPassword_(salt, password) {
   var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + '|' + password, Utilities.Charset.UTF_8);
   return bytesToHex_(bytes);
+}
+
+function hashPasswordV2_(salt, password, iterations) {
+  var h = hashPassword_(salt, password);
+  for (var i = 1; i < iterations; i++) {
+    h = bytesToHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, h + '|' + salt, Utilities.Charset.UTF_8));
+  }
+  return 'v2$' + iterations + '$' + h;
+}
+
+/** 新密碼一律用新版雜湊 */
+function makePasswordHash_(salt, password) {
+  return hashPasswordV2_(salt, password, PW_ITERATIONS);
+}
+
+/** 檢查密碼；upgrade = 密碼正確但雜湊是舊版或次數不同，應改存新版 */
+function verifyPassword_(u, password) {
+  var stored = str_(u && u.hash);
+  var m = /^v2\$(\d{1,6})\$([0-9a-f]{64})$/.exec(stored);
+  if (m) {
+    var it = Number(m[1]);
+    if (it < 1 || it > 200000) return { ok: false, upgrade: false };
+    var ok2 = hashPasswordV2_(u.salt, password, it) === stored;
+    return { ok: ok2, upgrade: ok2 && it !== PW_ITERATIONS };
+  }
+  if (/^[0-9a-f]{64}$/.test(stored)) {
+    var ok1 = hashPassword_(u.salt, password) === stored;
+    return { ok: ok1, upgrade: ok1 };
+  }
+  return { ok: false, upgrade: false };
 }
 
 function newSalt_() {
@@ -1918,31 +2130,51 @@ function findUser_(username) {
 /**
  * 登入防護（Apps Script 取不到訪客 IP，因此分兩層）：
  *  1. 同一個瀏覽器（clientId）錯 5 次 → 這個瀏覽器鎖 10 分鐘
- *  2. 同一帳號 10 分鐘內全站錯超過 20 次 → 之後每次嘗試延遲 3 秒（減緩猜密碼，但不擋正確密碼，避免被惡意鎖住帳號）
+ *  2. 同一個帳號不分瀏覽器錯 10 次 → 這個帳號暫停登入 15 分鐘（換瀏覽器代號也繞不過）
+ *     管理者「重設密碼」後立即解除（計數綁定密碼版本）
+ * 錯誤次數在鎖內累加，避免同時多次嘗試時計數被覆蓋。
  */
 function login(username, password, clientId) {
   try {
     var cache = CacheService.getScriptCache();
-    var user = str_(username).toLowerCase();
+    var user = str_(username).toLowerCase().slice(0, 60);
     var cid = str_(clientId).replace(/[^A-Za-z0-9-]/g, '').slice(0, 40);
     var u = findUser_(username);
     // 鎖定計數綁定目前的密碼版本：密碼被重設後，舊的錯誤次數自動歸零
     var ver = u ? credTag_(u) : 'none';
     var key = 'fail_' + user + '_' + cid + '_' + ver;
-    var gkey = 'gfail_' + user + '_' + ver;
-    var fails = Number(cache.get(key)) || 0;
-    var gfails = Number(cache.get(gkey)) || 0;
-    if (fails >= LOGIN_MAX_FAILS) return { ok: false, error: '密碼錯誤次數過多，請 10 分鐘後再試（或請管理者重設密碼）' };
-    if (gfails >= LOGIN_GLOBAL_SLOWDOWN) Utilities.sleep(3000);
-    if (!u || !u.enabled || hashPassword_(u.salt, String(password || '')) !== u.hash) {
-      cache.put(key, String(fails + 1), LOGIN_LOCK_SECONDS);
-      cache.put(gkey, String(gfails + 1), LOGIN_LOCK_SECONDS);
+    var ukey = 'ufail_' + user + '_' + ver;
+    if ((Number(cache.get(ukey)) || 0) >= LOGIN_USER_MAX_FAILS) return { ok: false, error: '這個帳號密碼錯誤次數過多，已暫停登入 15 分鐘；請稍後再試，或請集團管理者重設密碼（重設後立即解除）' };
+    if ((Number(cache.get(key)) || 0) >= LOGIN_MAX_FAILS) return { ok: false, error: '密碼錯誤次數過多，請 10 分鐘後再試（或請管理者重設密碼）' };
+    var pw = String(password || '');
+    var check = u && u.enabled ? verifyPassword_(u, pw) : null;
+    if (!u) makePasswordHash_('x', pw); // 帳號不存在也花一樣的時間，避免從回應速度猜出帳號
+    if (!check || !check.ok) {
+      withLock_(function () {
+        cache.put(key, String((Number(cache.get(key)) || 0) + 1), LOGIN_LOCK_SECONDS);
+        cache.put(ukey, String((Number(cache.get(ukey)) || 0) + 1), LOGIN_USER_LOCK_SECONDS);
+      });
       return { ok: false, error: '帳號或密碼錯誤' };
     }
     cache.remove(key);
+    cache.remove(ukey);
+    var patch = { '最後登入': nowText_() };
+    if (check.upgrade) {
+      // 舊版雜湊 → 新版：在鎖內重新讀取，確認密碼沒有剛好被別人改掉才寫入
+      u = withLock_(function () {
+        var fresh = findUser_(username);
+        if (!fresh || fresh.hash !== u.hash) return fresh || u;
+        var salt = newSalt_();
+        fresh.salt = salt;
+        fresh.hash = makePasswordHash_(salt, pw);
+        updateCells_(SHEETS.USERS, fresh._row, { '鹽': fresh.salt, '密碼雜湊': fresh.hash, '最後登入': patch['最後登入'] });
+        patch = null;
+        return fresh;
+      });
+    }
+    if (patch) updateCells_(SHEETS.USERS, u._row, patch);
     var issued = issueSession_(u);
-    updateCells_(SHEETS.USERS, u._row, { '最後登入': nowText_() });
-    log_(u.username, '登入', '');
+    log_(u.username, '登入', check.upgrade ? '密碼雜湊已升級' : '');
     return { ok: true, data: issued };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -1951,7 +2183,7 @@ function login(username, password, clientId) {
 
 /** 憑證版本：密碼一改，雜湊就變，舊的登入憑證全部失效 */
 function credTag_(u) {
-  return u.hash.slice(0, 16);
+  return String(u.hash).split('$').pop().slice(0, 16);
 }
 
 function issueSession_(u) {
@@ -1992,14 +2224,14 @@ function createUser_(username, name, role) {
   var pw = randomPassword_();
   appendObjects_(SHEETS.USERS, [{
     '帳號': username, '姓名': str_(name) || username, '角色': role, '鹽': salt,
-    '密碼雜湊': hashPassword_(salt, pw), '啟用': '是', '建立時間': nowText_(), '最後登入': ''
+    '密碼雜湊': makePasswordHash_(salt, pw), '啟用': '是', '建立時間': nowText_(), '最後登入': ''
   }]);
   return pw;
 }
 
 function setPassword_(user, newPassword) {
   var salt = newSalt_();
-  updateCells_(SHEETS.USERS, user._row, { '鹽': salt, '密碼雜湊': hashPassword_(salt, newPassword) });
+  updateCells_(SHEETS.USERS, user._row, { '鹽': salt, '密碼雜湊': makePasswordHash_(salt, newPassword) });
 }
 
 // ===== 40_Api.js =====
@@ -2027,6 +2259,7 @@ function include(name) {
 function api(token, action, payload) {
   CTX.company = null;
   CTX.ssCache = {};
+  beginRequestMemo_();
   try {
     payload = payload || {};
     var session = sessionFromToken_(token);
@@ -2055,6 +2288,7 @@ function api(token, action, payload) {
   } finally {
     CTX.company = null;
     CTX.ssCache = {};
+    endRequestMemo_();
   }
 }
 
@@ -2123,7 +2357,11 @@ HANDLERS.saveVoucher = function (p, s) {
   });
 };
 
-/** 新增或修改傳票（不加鎖，呼叫端負責加鎖） */
+/**
+ * 新增或修改傳票（不加鎖，呼叫端負責加鎖）
+ * 修改：舊分錄不刪除，標記「已修改」保留在試算表（查核用），再新增新版本分錄；號碼不變。
+ * 傳票號碼依月份編號（yyyyMM-），所以修改時不能把日期改到其他月份。
+ */
 function saveVoucherCore_(p, s) {
     var accounts = loadAccounts_();
     var byCode = indexAccounts_(accounts);
@@ -2136,7 +2374,10 @@ function saveVoucherCore_(p, s) {
       if (!old.length) throw new Error('找不到傳票 ' + p.no);
       if (old[0].status === '作廢') throw new Error('已作廢的傳票不能修改');
       if (old[0].source === '月底盤點') throw new Error('月底盤點傳票請到「月底盤點」重新產生');
-      if (locked[old[0].date.slice(0, 7)]) throw new Error(old[0].date.slice(0, 7) + ' 已鎖帳，不能修改');
+      if (isLocked_(locked, old[0].date.slice(0, 7))) throw new Error(old[0].date.slice(0, 7) + ' 已鎖帳，不能修改');
+      if (isValidDate_(str_(p.date)) && str_(p.date).slice(0, 7) !== old[0].date.slice(0, 7)) {
+        throw new Error('傳票 ' + p.no + ' 是 ' + old[0].date.slice(0, 7) + ' 的號碼，修改時不能把日期改到其他月份。\n請作廢這張傳票，再用新日期重新新增（可用「複製成新傳票」）。');
+      }
     }
     var v = { date: str_(p.date), type: str_(p.type), lines: p.lines || [] };
     var check = validateVoucher_(v, { accountsByCode: byCode, openingDate: settings.openingDate, lockedPeriods: locked });
@@ -2164,9 +2405,24 @@ function saveVoucherCore_(p, s) {
         '修改者': old.length ? s.username : '', '修改時間': old.length ? now : ''
       };
     });
-    if (old.length) deleteRowNumbers_(SHEETS.VOUCHERS, old.map(function (l) { return l._row; }));
-    appendObjects_(SHEETS.VOUCHERS, rows);
-    log_(s.username, old.length ? '修改傳票' : '新增傳票', no + ' ' + v.date + ' 金額 ' + check.debit);
+    if (old.length) {
+      // 先把舊分錄標成「已修改」（不刪除），再寫新版本；新版本寫入失敗就把舊分錄改回有效
+      updateCellsMany_(SHEETS.VOUCHERS, old.map(function (l) { return l._row; }), { '狀態': VOUCHER_SUPERSEDED, '修改者': s.username, '修改時間': now });
+      try {
+        appendObjects_(SHEETS.VOUCHERS, rows);
+      } catch (e) {
+        try {
+          old.forEach(function (l) { updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': l.status, '修改者': l.updatedBy, '修改時間': l.updatedAt }); });
+        } catch (e2) { /* 還原失敗：舊分錄仍在試算表（狀態「已修改」），可人工改回 */ }
+        throw e;
+      }
+      var oldTotal = 0;
+      old.forEach(function (l) { oldTotal += Number(l.debit) || 0; });
+      log_(s.username, '修改傳票', no + ' ' + v.date + ' 金額 ' + check.debit + '（修改前：' + old[0].date + ' 金額 ' + oldTotal + '，共 ' + old.length + ' 行，舊分錄保留在「傳票」分頁，狀態「' + VOUCHER_SUPERSEDED + '」、修改時間 ' + now + '）');
+    } else {
+      appendObjects_(SHEETS.VOUCHERS, rows);
+      log_(s.username, '新增傳票', no + ' ' + v.date + ' 金額 ' + check.debit);
+    }
     return { no: no, debit: check.debit };
 }
 
@@ -2176,11 +2432,11 @@ HANDLERS.voidVoucher = function (p, s) {
     if (!rows.length) throw new Error('找不到傳票 ' + p.no);
     if (rows[0].status === '作廢') throw new Error('此傳票已作廢');
     if (rows[0].source === '月底盤點') throw new Error('月底盤點傳票請到「月底盤點」重新盤點或取消盤點');
-    if (lockedPeriodsMap_()[rows[0].date.slice(0, 7)]) throw new Error(rows[0].date.slice(0, 7) + ' 已鎖帳，不能作廢');
+    if (isLocked_(lockedPeriodsMap_(), rows[0].date.slice(0, 7))) throw new Error(rows[0].date.slice(0, 7) + ' 已鎖帳，不能作廢');
     var reason = str_(p.reason);
     if (!reason) throw new Error('請填寫作廢原因');
     var now = nowText_();
-    rows.forEach(function (l) { updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now }); });
+    updateCellsMany_(SHEETS.VOUCHERS, rows.map(function (l) { return l._row; }), { '狀態': '作廢', '修改者': s.username, '修改時間': now });
     releaseDocsOf_(p.no, s);
     log_(s.username, '作廢傳票', p.no + '：' + reason);
     return { no: p.no };
@@ -2331,7 +2587,7 @@ HANDLERS.getOpening = function () {
   loadOpening_().forEach(function (o) { open[o.code] = o; });
   return {
     openingDate: settings.openingDate,
-    locked: !!(settings.openingDate && lockedPeriodsMap_()[settings.openingDate.slice(0, 7)]),
+    locked: !!(settings.openingDate && isLocked_(lockedPeriodsMap_(), settings.openingDate.slice(0, 7))),
     rows: accounts.sort(sortByCode_).map(function (a) {
       var o = open[a.code] || { debit: 0, credit: 0 };
       return { code: a.code, name: a.name, block: a.block, normal: a.normal, enabled: a.enabled, debit: o.debit, credit: o.credit };
@@ -2343,7 +2599,8 @@ HANDLERS.saveOpening = function (p, s) {
   return withLock_(function () {
     var settings = loadSettings_();
     if (!settings.openingDate) throw new Error('請先到「公司設定」填寫開帳日');
-    if (lockedPeriodsMap_()[settings.openingDate.slice(0, 7)]) throw new Error('開帳日所在月份已鎖帳，不能修改期初餘額');
+    // 期初餘額影響開帳日以後每個月的餘額：只要開帳月份（或之後任何月份）已鎖帳就不能改
+    if (isLocked_(lockedPeriodsMap_(), settings.openingDate.slice(0, 7))) throw new Error('開帳日所在月份已鎖帳（鎖帳會連同之前的月份一起鎖住），不能修改期初餘額');
     var byCode = indexAccounts_(loadAccounts_());
     var rows = (p.rows || []).map(function (r) { return { code: str_(r.code), debit: toAmount_(r.debit), credit: toAmount_(r.credit) }; });
     var check = validateOpening_(rows, byCode);
@@ -2386,7 +2643,7 @@ HANDLERS.stocktakePreview = function (p) {
   var counted = {};
   records.forEach(function (r) { counted[str_(r['存貨科目'])] = toAmount_(r['盤點金額']); });
   preview.forEach(function (row) { row.counted = counted[row.code] !== undefined ? counted[row.code] : ''; });
-  return { period: period, endDate: monthEnd_(period), locked: !!lockedPeriodsMap_()[period], rows: preview, priorVouchers: activeNos };
+  return { period: period, endDate: monthEnd_(period), locked: isLocked_(lockedPeriodsMap_(), period), rows: preview, priorVouchers: activeNos };
 };
 
 HANDLERS.stocktakeSave = function (p, s) {
@@ -2394,7 +2651,7 @@ HANDLERS.stocktakeSave = function (p, s) {
     var period = str_(p.period);
     checkStocktakePeriod_(period);
     var locked = lockedPeriodsMap_();
-    if (locked[period]) throw new Error(period + ' 已鎖帳');
+    if (isLocked_(locked, period)) throw new Error(period + ' 已鎖帳');
     var lines = loadLines_();
     var records = stocktakeRecords_(period);
     var activeNos = activeStocktakeNos_(records, lines);
@@ -2409,9 +2666,7 @@ HANDLERS.stocktakeSave = function (p, s) {
       if (check.errors.length) throw new Error('無法產生盤點傳票：\n' + check.errors.join('\n'));
     }
     var now = nowText_();
-    lines.forEach(function (l) {
-      if (activeNos.indexOf(l.no) >= 0) updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now });
-    });
+    updateCellsMany_(SHEETS.VOUCHERS, lines.filter(function (l) { return activeNos.indexOf(l.no) >= 0; }).map(function (l) { return l._row; }), { '狀態': '作廢', '修改者': s.username, '修改時間': now });
     var newNo = '';
     if (built.voucher) {
       built.voucher.source = '月底盤點';
@@ -2434,7 +2689,7 @@ HANDLERS.stocktakeClear = function (p, s) {
   return withLock_(function () {
     var period = str_(p.period);
     checkStocktakePeriod_(period);
-    if (lockedPeriodsMap_()[period]) throw new Error(period + ' 已鎖帳');
+    if (isLocked_(lockedPeriodsMap_(), period)) throw new Error(period + ' 已鎖帳');
     var reason = str_(p.reason);
     if (!reason) throw new Error('請填寫取消原因');
     var lines = loadLines_();
@@ -2442,9 +2697,7 @@ HANDLERS.stocktakeClear = function (p, s) {
     if (!records.length) throw new Error(period + ' 沒有盤點紀錄');
     var activeNos = activeStocktakeNos_(records, lines);
     var now = nowText_();
-    lines.forEach(function (l) {
-      if (activeNos.indexOf(l.no) >= 0) updateCells_(SHEETS.VOUCHERS, l._row, { '狀態': '作廢', '修改者': s.username, '修改時間': now });
-    });
+    updateCellsMany_(SHEETS.VOUCHERS, lines.filter(function (l) { return activeNos.indexOf(l.no) >= 0; }).map(function (l) { return l._row; }), { '狀態': '作廢', '修改者': s.username, '修改時間': now });
     deleteRowNumbers_(SHEETS.STOCKTAKE, records.map(function (r) { return r._row; }));
     log_(s.username, '取消月底盤點', period + '：' + reason + (activeNos.length ? '，作廢傳票 ' + activeNos.join('、') : ''));
     return { period: period, voided: activeNos };
@@ -2461,6 +2714,7 @@ HANDLERS.listPeriods = function () {
   lines.forEach(function (l) { if (l.date && l.date.slice(0, 7) < first) first = l.date.slice(0, 7); });
   var map = {};
   loadPeriods_().forEach(function (p) { map[p.period] = p; });
+  var through = lockedPeriodsMap_()._through || '';
   var counts = {};
   activeLines_(lines).forEach(function (l) { var k = l.date.slice(0, 7); counts[k] = counts[k] || {}; counts[k][l.no] = true; });
   var out = [];
@@ -2470,7 +2724,11 @@ HANDLERS.listPeriods = function () {
   while (guard++ < 600) {
     var k = y + '-' + pad_(m, 2);
     var rec = map[k] || {};
-    out.push({ period: k, status: rec.status || '開放', lockedBy: rec.lockedBy || '', lockedAt: rec.lockedAt || '', vouchers: counts[k] ? Object.keys(counts[k]).length : 0 });
+    var explicit = rec.status === '已鎖定';
+    // 還沒標記鎖帳、但後面月份已鎖帳 → 一起鎖住（implied），不能單獨解鎖
+    var implied = !explicit && !!through && k <= through;
+    out.push({ period: k, status: explicit || implied ? '已鎖定' : '開放', implied: implied, lockedThrough: implied ? through : '',
+      lockedBy: explicit ? rec.lockedBy || '' : '', lockedAt: explicit ? rec.lockedAt || '' : '', vouchers: counts[k] ? Object.keys(counts[k]).length : 0 });
     if (k >= last) break;
     m++; if (m > 12) { m = 1; y++; }
   }
@@ -2488,6 +2746,7 @@ function setPeriodStatus_(period, status, s) {
 HANDLERS.lockPeriod = function (p, s) {
   return withLock_(function () {
     var period = str_(p.period);
+    if (!isValidPeriod_(period)) throw new Error('期間格式需為 yyyy-MM');
     var tb = trialBalance_(loadAccounts_(), loadOpening_(), loadLines_(), '', monthEnd_(period));
     if (!tb.balanced) throw new Error('截至 ' + monthEnd_(period) + ' 的試算表借貸不平衡（多半是期初餘額未平衡），請先修正再鎖帳');
     setPeriodStatus_(period, '已鎖定', s);
@@ -2500,7 +2759,13 @@ HANDLERS.unlockPeriod = function (p, s) {
   return withLock_(function () {
     var reason = str_(p.reason);
     if (!reason) throw new Error('請填寫解鎖原因');
-    setPeriodStatus_(str_(p.period), '開放', s);
+    var period = str_(p.period);
+    if (!isValidPeriod_(period)) throw new Error('期間格式需為 yyyy-MM');
+    var explicit = explicitLocks_();
+    var later = Object.keys(explicit).filter(function (k) { return k > period; }).sort();
+    if (later.length) throw new Error(period + ' 之後的 ' + later[later.length - 1] + ' 還鎖著（鎖帳會連同之前的月份一起鎖住），請從最後一個鎖帳月份開始解鎖');
+    if (!explicit[period]) throw new Error(period + ' 沒有鎖帳');
+    setPeriodStatus_(period, '開放', s);
     log_(s.username, '解鎖', p.period + '：' + reason);
     return { period: p.period };
   });
@@ -2611,6 +2876,9 @@ HANDLERS.saveSettings = function (p, s) {
     if (old.openingDate && !st.openingDate && (loadOpening_().length || loadLines_().length)) {
       errors.push('已有期初餘額或傳票，開帳日不能清空');
     }
+    var hasLocks = Object.keys(explicitLocks_()).length > 0;
+    if (hasLocks && st.fyStartMonth !== old.fyStartMonth) errors.push('已有鎖帳月份，不能修改會計年度起始月（會改變已鎖帳月份的本期損益）；請先解鎖全部月份再修改');
+    if (hasLocks && st.openingDate !== old.openingDate) errors.push('已有鎖帳月份，不能修改開帳日；請先解鎖全部月份再修改');
     if (st.openingDate && st.openingDate !== old.openingDate) {
       var earlier = loadLines_().filter(function (l) { return l.status !== '作廢' && l.date < st.openingDate; });
       if (earlier.length) errors.push('已有早於 ' + st.openingDate + ' 的傳票（' + earlier[0].no + '），不能把開帳日改晚');
@@ -2641,7 +2909,7 @@ HANDLERS.resetPassword = function (p, s) {
 
 HANDLERS.changePassword = function (p, s) {
   var u = findUser_(s.username);
-  if (!u || hashPassword_(u.salt, String(p.oldPassword || '')) !== u.hash) throw new Error('目前密碼不正確');
+  if (!u || !verifyPassword_(u, String(p.oldPassword || '')).ok) throw new Error('目前密碼不正確');
   var err = validatePasswordStrength_(p.newPassword);
   if (err) throw new Error(err);
   setPassword_(u, p.newPassword);
@@ -3220,7 +3488,17 @@ HANDLERS.uploadDoc = function (p, s) {
   var stamp = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyyMMdd-HHmmss');
   var blob = Utilities.newBlob(bytes, type, stamp + '_' + name);
   var file = docFolder_().createFile(blob);
+  // 檔案先存進雲端硬碟；之後任何一步失敗（例如等不到鎖），就把剛存的檔案丟到垃圾桶，不留沒有單據紀錄的孤兒檔
+  var saved = false;
+  try {
+    return uploadDocAfterFile_(file, blob, name, settings, s, function () { saved = true; });
+  } catch (e) {
+    if (!saved) { try { file.setTrashed(true); } catch (e2) { /* 清不掉也不影響錯誤訊息 */ } }
+    throw e;
+  }
+};
 
+function uploadDocAfterFile_(file, blob, name, settings, s, markSaved) {
   // 文字辨識需要幾秒，放在鎖外面，避免卡住其他人
   var ocr = ocrBlob_(blob);
   var parsed = parseReceiptText_(ocr.text, { taxId: settings.taxId, name: settings.companyName });
@@ -3243,11 +3521,12 @@ HANDLERS.uploadDoc = function (p, s) {
     d.hint = hintText_(d, settings, suggest);
     checkDoc_(d, docCtx_(docs.concat([d])));
     appendObjects_(SHEETS.DOCS, [docToObj_(d)]);
+    markSaved(); // 單據紀錄已寫入，之後失敗也不能刪檔（紀錄會指向這個檔案）
     saveDocText_(d.id, 'Google 雲端硬碟 OCR', ocr.text);
     log_(s.username, '上傳單據', d.id + ' ' + name + (d.total ? ' 金額 ' + d.total : ''));
     return { id: d.id, status: d.status, level: d.level, kind: d.kind, date: d.date, total: d.total, sellerName: d.sellerName, note: d.note };
   });
-};
+}
 
 /** 匯入財政部進項發票檔（前端讀成文字後送來） */
 /**
@@ -3606,6 +3885,7 @@ function setup() {
 }
 
 function ensureSheet_(ss, name) {
+  invalidateAllTables_();
   var sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
   var headers = HEADERS[name];

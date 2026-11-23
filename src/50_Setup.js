@@ -76,6 +76,7 @@ function setup() {
 }
 
 function ensureSheet_(ss, name) {
+  invalidateAllTables_();
   var sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
   var headers = HEADERS[name];

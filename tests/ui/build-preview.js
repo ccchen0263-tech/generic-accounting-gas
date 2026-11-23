@@ -29,7 +29,7 @@ const afterServer = `
   createUser_('helper', '小幫手', '成員'); setPassword_(findUser_('helper'), 'Help12345');
   var s = { username: 'admin', name: '管理者', role: '管理者' };
   CTX.company = loadCompanies_()[0];
-  HANDLERS.saveSettings({ companyName: '公版餐飲有限公司', taxId: '53212539', industries: ['餐飲'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' }, s);
+  HANDLERS.saveSettings({ companyName: '公版餐飲有限公司', taxId: '90000001', industries: ['餐飲'], vatType: '一般稅額', fyStartMonth: 1, openingDate: '2026-01-01' }, s);
   HANDLERS.addByIndustry({ industries: ['餐飲'] }, s);
   HANDLERS.saveOpening({ rows: [
     { code: '1111', debit: 50000 }, { code: '1113', debit: 820000 }, { code: '1166', debit: 36000 },
@@ -38,7 +38,7 @@ const afterServer = `
   ] }, s);
   var V = function (date, type, memo, lines) { return HANDLERS.saveVoucher({ date: date, type: type, memo: memo, lines: lines }, s); };
   V('2026-01-05', '支出', '一月店租', [{ code: '6121', debit: 85000 }, { code: '1113', credit: 85000 }]);
-  V('2026-01-08', '支出', '食材進貨', [{ code: '5171', debit: 128000, party: '大成食品' }, { code: '1191', debit: 6400 }, { code: '2131', credit: 134400, party: '大成食品' }]);
+  V('2026-01-08', '支出', '食材進貨', [{ code: '5171', debit: 128000, party: '範例食品行' }, { code: '1191', debit: 6400 }, { code: '2131', credit: 134400, party: '範例食品行' }]);
   V('2026-01-15', '收入', '上半月營收', [{ code: '1111', debit: 96000 }, { code: '1142', debit: 120750 }, { code: '4121', credit: 160000 }, { code: '4122', credit: 46500 }, { code: '2161', credit: 10250 }]);
   V('2026-01-20', '收入', '外送平台撥款', [{ code: '1113', debit: 58200 }, { code: '6332', debit: 15800 }, { code: '4123', credit: 70476 }, { code: '2161', credit: 3524 }]);
   V('2026-01-25', '支出', '一月薪資', [{ code: '6111', debit: 168000 }, { code: '6112', debit: 42000 }, { code: '1113', credit: 210000 }]);
@@ -47,18 +47,18 @@ const afterServer = `
   HANDLERS.stocktakeSave({ period: '2026-01', counts: { '1166': 41500 } }, s);
   HANDLERS.lockPeriod({ period: '2026-01' }, s);
   V('2026-02-03', '支出', '二月店租', [{ code: '6121', debit: 85000 }, { code: '1113', credit: 85000 }]);
-  V('2026-02-06', '支出', '食材進貨', [{ code: '5171', debit: 96500, party: '大成食品' }, { code: '1191', debit: 4825 }, { code: '1113', credit: 101325 }]);
+  V('2026-02-06', '支出', '食材進貨', [{ code: '5171', debit: 96500, party: '範例食品行' }, { code: '1191', debit: 4825 }, { code: '1113', credit: 101325 }]);
   V('2026-02-09', '收入', '二月第一週營收', [{ code: '1111', debit: 61000 }, { code: '1142', debit: 75000 }, { code: '4121', credit: 104762 }, { code: '4122', credit: 24762 }, { code: '2161', credit: 6476 }]);
   var bad = V('2026-02-09', '支出', '重複輸入', [{ code: '6361', debit: 3200 }, { code: '1111', credit: 3200 }]);
   HANDLERS.voidVoucher({ no: bad.no, reason: '重複輸入' }, s);
   // 單據匣示範：一張拍照上傳（假的辨識文字）、財政部進項發票匯入
-  __drive.ocrQueue.push('統一發票（三聯式）\\n大成生鮮食品有限公司\\n統一編號 22099131\\n中華民國 115 年 2 月 6 日\\nAB-12345678\\n買受人統一編號 53212539\\n銷售額合計 10,000\\n營業稅 500\\n總計 10,500');
-  HANDLERS.uploadDoc({ name: '大成發票.jpg', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' }, s);
+  __drive.ocrQueue.push('統一發票（三聯式）\\n範例生鮮食品有限公司\\n統一編號 91000004\\n中華民國 115 年 2 月 6 日\\nAB-12345678\\n買受人統一編號 90000001\\n銷售額合計 10,000\\n營業稅 500\\n總計 10,500');
+  HANDLERS.uploadDoc({ name: '範例發票.jpg', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' }, s);
   __drive.ocrQueue.push('收 據\\n阿明水電行\\n日期：2026/02/08\\n冷氣清洗\\n合計 NT$ 3,200 元');
   HANDLERS.uploadDoc({ name: '水電收據.jpg', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' }, s);
   __drive.ocrQueue.push('統一發票\\n某某商行\\nXY-11223344\\n2026/02/09\\n銷售額 1,000\\n稅額 50\\n總計 1,500');
   HANDLERS.uploadDoc({ name: '金額對不上.jpg', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' }, s);
-  HANDLERS.importInvoices({ fileName: '進項.csv', text: '發票狀態,發票號碼,發票日期,賣方統一編號,賣方名稱,買方統一編號,銷售額合計,營業稅,總計\\n已確認,CD11112222,115/02/05,22099131,中華電信股份有限公司,53212539,1000,50,1050\\n已確認,CD11113333,115/02/07,04595257,台灣電力股份有限公司,53212539,2000,100,2100' }, s);
+  HANDLERS.importInvoices({ fileName: '進項.csv', text: '發票狀態,發票號碼,發票日期,賣方統一編號,賣方名稱,買方統一編號,銷售額合計,營業稅,總計\\n已確認,CD11112222,115/02/05,91000004,範例電信股份有限公司,90000001,1000,50,1050\\n已確認,CD11113333,115/02/07,92000002,範例瓦斯股份有限公司,90000001,2000,100,2100' }, s);
   // 第二家公司：公版食品
   CTX.company = loadCompanies_()[0];
   var food = HANDLERS.createCompany({ name: '公版食品有限公司', industries: ['食品製造', '食品買賣'] }, s);
@@ -94,9 +94,10 @@ window.google = { script: { run: (function () {
 `;
 
 let html = read('Index.html').split('<?= appName ?>').join('公版會計系統');
-html = html.replace("<?!= include('Css'); ?>", read('Css.html'));
+// 用函式當替換值：程式碼裡的 $' $& 等字元才不會被 replace 當成特殊符號
+html = html.replace("<?!= include('Css'); ?>", () => read('Css.html'));
 html = html.replace("<?!= include('Js'); ?>",
-  '<script>' + fakes + '</script>\n<script>' + seed + '</script>\n<script>' + serverJs + '</script>\n<script>' + afterServer + '</script>\n' + read('Js.html'));
+  () => '<script>' + fakes + '</script>\n<script>' + seed + '</script>\n<script>' + serverJs + '</script>\n<script>' + afterServer + '</script>\n' + read('Js.html'));
 if (html.includes('<?')) throw new Error('預覽頁仍有未處理的樣板標記');
 const out = path.join(__dirname, 'preview.html');
 fs.writeFileSync(out, html);
